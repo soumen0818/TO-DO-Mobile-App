@@ -2,7 +2,7 @@ import { createHomeStyles } from "@/assets/styles/home.styles";
 import EmptyState from "@/components/EmptyState";
 import Header from "@/components/Header";
 import LoadingSpinner from "@/components/LoadingSpinner";
-import TodoInput from "@/components/TodoInput";
+import TodoInput from "@/components/Todoinput";
 import { api } from "@/convex/_generated/api";
 import { Doc, Id } from "@/convex/_generated/dataModel";
 import useTheme from "@/hooks/useTheme";
