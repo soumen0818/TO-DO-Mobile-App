@@ -26,6 +26,11 @@ export const createSettingsStyles = (colors: ColorScheme) => {
       alignItems: "center",
       marginRight: 16,
     },
+    logoImage: {
+      width: 56,
+      height: 56,
+      borderRadius: 16,
+    },
     title: {
       fontSize: 32,
       fontWeight: "700",
