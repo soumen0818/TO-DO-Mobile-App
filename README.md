@@ -599,34 +599,6 @@ When reporting bugs, please include:
 
 ---
 
-## 🗺️ Roadmap
-
-### Version 1.1 (Planned)
-
-- [ ] Task categories/tags
-- [ ] Due dates and reminders
-- [ ] Search functionality
-- [ ] Task filtering and sorting
-- [ ] Recurring tasks
-
-### Version 1.2 (Planned)
-
-- [ ] User authentication
-- [ ] Multi-user support
-- [ ] Task sharing
-- [ ] Collaboration features
-- [ ] Activity history
-
-### Version 2.0 (Future)
-
-- [ ] Subtasks support
-- [ ] File attachments
-- [ ] Voice input
-- [ ] AI-powered task suggestions
-- [ ] Analytics dashboard
-
----
-
 <div align="center">
   
   ### ⭐ Star this repository if you find it helpful!
