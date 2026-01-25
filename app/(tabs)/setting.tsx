@@ -15,12 +15,18 @@ const SettingsScreen = () => {
   const settingsStyles = createSettingsStyles(colors);
 
   return (
-    <LinearGradient colors={colors.gradients.background} style={settingsStyles.container}>
+    <LinearGradient
+      colors={colors.gradients.background}
+      style={settingsStyles.container}
+    >
       <SafeAreaView style={settingsStyles.safeArea}>
         {/* HEADER */}
         <View style={settingsStyles.header}>
           <View style={settingsStyles.titleContainer}>
-            <LinearGradient colors={colors.gradients.primary} style={settingsStyles.iconContainer}>
+            <LinearGradient
+              colors={colors.gradients.primary}
+              style={settingsStyles.iconContainer}
+            >
               <Ionicons name="settings" size={28} color="#ffffff" />
             </LinearGradient>
             <Text style={settingsStyles.title}>Settings</Text>
