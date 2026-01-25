@@ -38,6 +38,12 @@ export const createHomeStyles = (colors: ColorScheme) => {
       alignItems: "center",
       marginRight: 16,
     },
+    logoImage: {
+      width: 56,
+      height: 56,
+      borderRadius: 16,
+      marginRight: 16,
+    },
     titleTextContainer: {
       flex: 1,
     },
@@ -219,6 +225,11 @@ export const createHomeStyles = (colors: ColorScheme) => {
       justifyContent: "center",
       alignItems: "center",
       marginBottom: 24,
+    },
+    emptyLogoImage: {
+      width: 100,
+      height: 100,
+      borderRadius: 20,
     },
     emptyText: {
       fontSize: 24,
