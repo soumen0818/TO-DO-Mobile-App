@@ -1,9 +1,21 @@
 import useTheme from "@/hooks/useTheme";
+import { useUser } from "@clerk/clerk-expo";
 import { Ionicons } from "@expo/vector-icons";
-import { Tabs } from "expo-router";
+import { Redirect, Tabs } from "expo-router";
 
 const TabsLayout = () => {
   const { colors } = useTheme();
+  const { user, isLoaded } = useUser();
+
+  // Show nothing while loading
+  if (!isLoaded) {
+    return null;
+  }
+
+  // Redirect to sign-in if not authenticated
+  if (!user) {
+    return <Redirect href="/sign-in" />;
+  }
 
   return (
     <Tabs
@@ -40,6 +52,15 @@ const TabsLayout = () => {
           title: "Settings",
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="settings" size={size} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="profile"
+        options={{
+          title: "Profile",
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="person" size={size} color={color} />
           ),
         }}
       />
