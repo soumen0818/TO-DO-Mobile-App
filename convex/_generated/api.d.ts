@@ -8,7 +8,10 @@
  * @module
  */
 
+import type * as autoDelete from "../autoDelete.js";
+import type * as crons from "../crons.js";
 import type * as todos from "../todos.js";
+import type * as users from "../users.js";
 
 import type {
   ApiFromModules,
@@ -17,7 +20,10 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  autoDelete: typeof autoDelete;
+  crons: typeof crons;
   todos: typeof todos;
+  users: typeof users;
 }>;
 
 /**
