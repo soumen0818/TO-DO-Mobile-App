@@ -120,6 +120,34 @@ export const createHomeStyles = (colors: ColorScheme) => {
     addButtonDisabled: {
       opacity: 0.5,
     },
+    categoryContainer: {
+      flexDirection: "row",
+      paddingHorizontal: 24,
+      paddingVertical: 16,
+      gap: 12,
+    },
+    categoryTab: {
+      flex: 1,
+      paddingVertical: 12,
+      paddingHorizontal: 16,
+      borderRadius: 16,
+      alignItems: "center",
+      backgroundColor: colors.surface,
+      borderWidth: 2,
+      borderColor: colors.border,
+    },
+    categoryTabActive: {
+      backgroundColor: colors.primary,
+      borderColor: colors.primary,
+    },
+    categoryTabText: {
+      fontSize: 15,
+      fontWeight: "600",
+      color: colors.text,
+    },
+    categoryTabTextActive: {
+      color: "#fff",
+    },
     todoList: {
       flex: 1,
     },
@@ -153,26 +181,107 @@ export const createHomeStyles = (colors: ColorScheme) => {
       marginTop: 2,
     },
     checkboxInner: {
-      width: 32,
-      height: 32,
-      borderRadius: 16,
-      borderWidth: 2,
+      width: 28,
+      height: 28,
+      borderRadius: 14,
       justifyContent: "center",
       alignItems: "center",
+    },
+    todoContentWrapper: {
+      flex: 1,
+      flexDirection: "row",
+      gap: 12,
     },
     todoTextContainer: {
       flex: 1,
     },
+    todoHeader: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "flex-start",
+      marginBottom: 8,
+      gap: 8,
+    },
     todoText: {
+      flex: 1,
       fontSize: 17,
       lineHeight: 24,
-      fontWeight: "500",
-      marginBottom: 16,
+      fontWeight: "600",
       color: colors.text,
     },
-    todoActions: {
+    todoTextCompleted: {
+      textDecorationLine: "line-through",
+      color: colors.textMuted,
+      opacity: 0.7,
+    },
+    completedBadgeContainer: {
+      marginBottom: 8,
+    },
+    completedBadge: {
       flexDirection: "row",
-      gap: 12,
+      alignItems: "center",
+      gap: 6,
+      alignSelf: "flex-start",
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 8,
+    },
+    completedText: {
+      fontSize: 13,
+      fontWeight: "700",
+      color: "#fff",
+    },
+    todoDescription: {
+      fontSize: 15,
+      lineHeight: 20,
+      color: colors.text,
+      opacity: 0.8,
+      marginBottom: 12,
+    },
+    todoDescriptionCompleted: {
+      opacity: 0.5,
+      color: colors.textMuted,
+    },
+    priorityBadge: {
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 6,
+      alignSelf: "flex-start",
+    },
+    priorityHigh: {
+      backgroundColor: colors.danger,
+    },
+    priorityMedium: {
+      backgroundColor: colors.warning,
+    },
+    priorityLow: {
+      backgroundColor: colors.success,
+    },
+    priorityText: {
+      fontSize: 10,
+      fontWeight: "700",
+      color: "#fff",
+      letterSpacing: 0.5,
+    },
+    todoMetaRow: {
+      flexDirection: "row",
+      gap: 16,
+      flexWrap: "wrap",
+    },
+    metaItem: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+    },
+    metaText: {
+      fontSize: 13,
+      fontWeight: "500",
+      color: colors.textMuted,
+    },
+    todoActionsColumn: {
+      flexDirection: "column",
+      gap: 8,
+      justifyContent: "center",
     },
     actionButton: {
       width: 40,
@@ -243,6 +352,24 @@ export const createHomeStyles = (colors: ColorScheme) => {
       paddingHorizontal: 40,
       lineHeight: 24,
       color: colors.textMuted,
+    },
+    fab: {
+      position: "absolute",
+      bottom: 24,
+      right: 24,
+      zIndex: 10,
+    },
+    fabGradient: {
+      width: 60,
+      height: 60,
+      borderRadius: 30,
+      justifyContent: "center",
+      alignItems: "center",
+      shadowColor: "#000",
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.3,
+      shadowRadius: 4,
+      elevation: 8,
     },
   });
 
