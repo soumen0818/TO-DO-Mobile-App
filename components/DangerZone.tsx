@@ -1,6 +1,7 @@
 import { createSettingsStyles } from "@/assets/styles/settings.styles";
 import { api } from "@/convex/_generated/api";
 import useTheme from "@/hooks/useTheme";
+import { useUser } from "@clerk/clerk-expo";
 import { Ionicons } from "@expo/vector-icons";
 import { useMutation } from "convex/react";
 import { LinearGradient } from "expo-linear-gradient";
@@ -8,12 +9,15 @@ import { Alert, Text, TouchableOpacity, View } from "react-native";
 
 const DangerZone = () => {
   const { colors } = useTheme();
+  const { user } = useUser();
 
   const settingsStyles = createSettingsStyles(colors);
 
   const clearAllTodos = useMutation(api.todos.clearAllTodos);
 
   const handleResetApp = async () => {
+    if (!user) return;
+
     Alert.alert(
       "Reset App",
       "⚠️ This will delete ALL your todos permanently. This action cannot be undone.",
@@ -24,10 +28,10 @@ const DangerZone = () => {
           style: "destructive",
           onPress: async () => {
             try {
-              const result = await clearAllTodos();
+              const result = await clearAllTodos({ userId: user.id });
               Alert.alert(
                 "App Reset",
-                `Successfully deleted ${result.deletedCount} todo${result.deletedCount === 1 ? "" : "s"}. Your app has been reset.`
+                `Successfully deleted ${result.deletedCount} todo${result.deletedCount === 1 ? "" : "s"}. Your app has been reset.`,
               );
             } catch (error) {
               console.log("Error deleting all todos", error);
@@ -35,12 +39,15 @@ const DangerZone = () => {
             }
           },
         },
-      ]
+      ],
     );
   };
 
   return (
-    <LinearGradient colors={colors.gradients.surface} style={settingsStyles.section}>
+    <LinearGradient
+      colors={colors.gradients.surface}
+      style={settingsStyles.section}
+    >
       <Text style={settingsStyles.sectionTitleDanger}>Danger Zone</Text>
 
       <TouchableOpacity
@@ -49,7 +56,10 @@ const DangerZone = () => {
         activeOpacity={0.7}
       >
         <View style={settingsStyles.actionLeft}>
-          <LinearGradient colors={colors.gradients.danger} style={settingsStyles.actionIcon}>
+          <LinearGradient
+            colors={colors.gradients.danger}
+            style={settingsStyles.actionIcon}
+          >
             <Ionicons name="trash" size={18} color="#ffffff" />
           </LinearGradient>
           <Text style={settingsStyles.actionTextDanger}>Reset App</Text>
