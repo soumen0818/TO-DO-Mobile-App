@@ -1,9 +1,11 @@
 import { createHomeStyles } from "@/assets/styles/home.styles";
+import CustomAlert from "@/components/CustomAlert";
 import EditTodoModal from "@/components/EditTodoModal";
 import EmptyState from "@/components/EmptyState";
 import ExpirationNotice from "@/components/ExpirationNotice";
 import Header from "@/components/Header";
 import LoadingSpinner from "@/components/LoadingSpinner";
+import TodoDetailModal from "@/components/TodoDetailModal";
 import TodoInput from "@/components/Todoinput";
 import { api } from "@/convex/_generated/api";
 import { Doc, Id } from "@/convex/_generated/dataModel";
@@ -14,12 +16,11 @@ import { useMutation, useQuery } from "convex/react";
 import { LinearGradient } from "expo-linear-gradient";
 import { useState } from "react";
 import {
-  Alert,
-  FlatList,
-  StatusBar,
-  Text,
-  TouchableOpacity,
-  View,
+    FlatList,
+    StatusBar,
+    Text,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -32,35 +33,69 @@ export default function Index() {
   const [editingTodo, setEditingTodo] = useState<Todo | null>(null);
   const [showEditModal, setShowEditModal] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<
-    "daily" | "weekly" | "monthly"
+    "daily" | "weekly" | "monthly" | "others"
   >("daily");
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showDetailModal, setShowDetailModal] = useState(false);
+  const [detailTodo, setDetailTodo] = useState<Todo | null>(null);
+  const [alertConfig, setAlertConfig] = useState<{
+    visible: boolean;
+    title: string;
+    message: string;
+    buttons: {
+      text: string;
+      onPress?: () => void;
+      style?: "default" | "cancel" | "destructive";
+    }[];
+    type?: "info" | "warning" | "error" | "success";
+  }>({
+    visible: false,
+    title: "",
+    message: "",
+    buttons: [],
+  });
 
   const homeStyles = createHomeStyles(colors);
 
   const todos = useQuery(
     api.todos.getTodosByCategory,
-    user ? { userId: user.id, category: selectedCategory } : "skip",
+    user
+      ? {
+          userId: user.id,
+          category:
+            selectedCategory === "others" ? undefined : selectedCategory,
+        }
+      : "skip",
   );
   const toggleTodo = useMutation(api.todos.toggleTodo);
   const deleteTodo = useMutation(api.todos.deleteTodo);
 
-  const isLoading = todos === undefined;
+  const isLoading = todos === undefined && !user;
 
   if (isLoading) return <LoadingSpinner />;
 
   const handleOpenAddModal = () => {
-    const limits = { daily: 10, weekly: 20, monthly: 30 };
-    const currentLimit = limits[selectedCategory];
-    const currentCount = todos?.length || 0;
+    // No limits for "others" category
+    if (selectedCategory !== "others") {
+      const limits = { daily: 10, weekly: 20, monthly: 30 };
+      const currentLimit = limits[selectedCategory];
+      const currentCount = todos?.length || 0;
 
-    if (currentCount >= currentLimit) {
-      Alert.alert(
-        "Limit Reached",
-        `You have reached the maximum of ${currentLimit} todos for ${selectedCategory} category. Please delete some todos first.`,
-        [{ text: "OK" }],
-      );
-      return;
+      if (currentCount >= currentLimit) {
+        setAlertConfig({
+          visible: true,
+          title: "Limit Reached",
+          message: `You have reached the maximum of ${currentLimit} todos for ${selectedCategory} category. Please delete some todos first.`,
+          buttons: [
+            {
+              text: "OK",
+              onPress: () => setAlertConfig({ ...alertConfig, visible: false }),
+            },
+          ],
+          type: "warning",
+        });
+        return;
+      }
     }
 
     setShowAddModal(true);
@@ -72,20 +107,49 @@ export default function Index() {
       await toggleTodo({ id, userId: user.id });
     } catch (error) {
       console.log("Error toggling todo", error);
-      Alert.alert("Error", "Failed to toggle todo");
+      setAlertConfig({
+        visible: true,
+        title: "Error",
+        message: "Failed to toggle todo",
+        buttons: [
+          {
+            text: "OK",
+            onPress: () => setAlertConfig({ ...alertConfig, visible: false }),
+          },
+        ],
+        type: "error",
+      });
     }
   };
 
   const handleDeleteTodo = async (id: Id<"todos">) => {
     if (!user) return;
-    Alert.alert("Delete Todo", "Are you sure you want to delete this todo?", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: () => deleteTodo({ id, userId: user.id }),
-      },
-    ]);
+    setAlertConfig({
+      visible: true,
+      title: "Delete Todo",
+      message: "Are you sure you want to delete this todo?",
+      buttons: [
+        {
+          text: "Cancel",
+          style: "cancel",
+          onPress: () => setAlertConfig({ ...alertConfig, visible: false }),
+        },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: () => {
+            deleteTodo({ id, userId: user.id });
+            setAlertConfig({ ...alertConfig, visible: false });
+          },
+        },
+      ],
+      type: "warning",
+    });
+  };
+
+  const handleViewDetails = (todo: Todo) => {
+    setDetailTodo(todo);
+    setShowDetailModal(true);
   };
 
   const handleEditTodo = (todo: Todo) => {
@@ -100,7 +164,11 @@ export default function Index() {
 
   const renderTodoItem = ({ item }: { item: Todo }) => {
     return (
-      <View style={homeStyles.todoItemWrapper}>
+      <TouchableOpacity
+        style={homeStyles.todoItemWrapper}
+        onPress={() => handleViewDetails(item)}
+        activeOpacity={0.7}
+      >
         <LinearGradient
           colors={colors.gradients.surface}
           style={homeStyles.todoItem}
@@ -261,7 +329,7 @@ export default function Index() {
             </View>
           </View>
         </LinearGradient>
-      </View>
+      </TouchableOpacity>
     );
   };
 
@@ -276,27 +344,29 @@ export default function Index() {
 
         {/* Category Tabs */}
         <View style={homeStyles.categoryContainer}>
-          {(["daily", "weekly", "monthly"] as const).map((category) => (
-            <TouchableOpacity
-              key={category}
-              style={[
-                homeStyles.categoryTab,
-                selectedCategory === category && homeStyles.categoryTabActive,
-              ]}
-              onPress={() => setSelectedCategory(category)}
-              activeOpacity={0.7}
-            >
-              <Text
+          {(["daily", "weekly", "monthly", "others"] as const).map(
+            (category) => (
+              <TouchableOpacity
+                key={category}
                 style={[
-                  homeStyles.categoryTabText,
-                  selectedCategory === category &&
-                    homeStyles.categoryTabTextActive,
+                  homeStyles.categoryTab,
+                  selectedCategory === category && homeStyles.categoryTabActive,
                 ]}
+                onPress={() => setSelectedCategory(category)}
+                activeOpacity={0.7}
               >
-                {category.charAt(0).toUpperCase() + category.slice(1)}
-              </Text>
-            </TouchableOpacity>
-          ))}
+                <Text
+                  style={[
+                    homeStyles.categoryTabText,
+                    selectedCategory === category &&
+                      homeStyles.categoryTabTextActive,
+                  ]}
+                >
+                  {category.charAt(0).toUpperCase() + category.slice(1)}
+                </Text>
+              </TouchableOpacity>
+            ),
+          )}
         </View>
 
         {/* Expiration Notice */}
@@ -331,7 +401,9 @@ export default function Index() {
           <TodoInput
             visible={showAddModal}
             onClose={() => setShowAddModal(false)}
-            defaultCategory={selectedCategory}
+            defaultCategory={
+              selectedCategory === "others" ? undefined : selectedCategory
+            }
             currentCount={todos?.length || 0}
           />
         )}
@@ -341,6 +413,22 @@ export default function Index() {
           visible={showEditModal}
           onClose={handleCloseEditModal}
           todo={editingTodo}
+        />
+
+        {/* Todo Detail Modal */}
+        <TodoDetailModal
+          visible={showDetailModal}
+          onClose={() => setShowDetailModal(false)}
+          todo={detailTodo}
+        />
+
+        {/* Custom Alert */}
+        <CustomAlert
+          visible={alertConfig.visible}
+          title={alertConfig.title}
+          message={alertConfig.message}
+          buttons={alertConfig.buttons}
+          type={alertConfig.type}
         />
       </SafeAreaView>
     </LinearGradient>
