@@ -8,19 +8,26 @@ import { Switch, Text, View } from "react-native";
 const Preferences = () => {
   const [isAutoSync, setIsAutoSync] = useState(true);
   const [isNotificationsEnabled, setIsNotificationsEnabled] = useState(true);
+  const [soundEnabled, setSoundEnabled] = useState(true);
 
   const { isDarkMode, toggleDarkMode, colors } = useTheme();
 
   const settingsStyles = createSettingsStyles(colors);
 
   return (
-    <LinearGradient colors={colors.gradients.surface} style={settingsStyles.section}>
+    <LinearGradient
+      colors={colors.gradients.surface}
+      style={settingsStyles.section}
+    >
       <Text style={settingsStyles.sectionTitle}>Preferences</Text>
 
       {/* DARK MODE */}
       <View style={settingsStyles.settingItem}>
         <View style={settingsStyles.settingLeft}>
-          <LinearGradient colors={colors.gradients.primary} style={settingsStyles.settingIcon}>
+          <LinearGradient
+            colors={colors.gradients.primary}
+            style={settingsStyles.settingIcon}
+          >
             <Ionicons name="moon" size={18} color="#fff" />
           </LinearGradient>
           <Text style={settingsStyles.settingText}>Dark Mode</Text>
@@ -37,16 +44,41 @@ const Preferences = () => {
       {/* NOTIFICATONS */}
       <View style={settingsStyles.settingItem}>
         <View style={settingsStyles.settingLeft}>
-          <LinearGradient colors={colors.gradients.warning} style={settingsStyles.settingIcon}>
+          <LinearGradient
+            colors={colors.gradients.warning}
+            style={settingsStyles.settingIcon}
+          >
             <Ionicons name="notifications" size={18} color="#fff" />
           </LinearGradient>
           <Text style={settingsStyles.settingText}>Notifications</Text>
         </View>
         <Switch
           value={isNotificationsEnabled}
-          onValueChange={() => setIsNotificationsEnabled(!isNotificationsEnabled)}
+          onValueChange={() =>
+            setIsNotificationsEnabled(!isNotificationsEnabled)
+          }
           thumbColor={"#fff"}
           trackColor={{ false: colors.border, true: colors.warning }}
+          ios_backgroundColor={colors.border}
+        />
+      </View>
+
+      {/* SOUND */}
+      <View style={settingsStyles.settingItem}>
+        <View style={settingsStyles.settingLeft}>
+          <LinearGradient
+            colors={colors.gradients.primary}
+            style={settingsStyles.settingIcon}
+          >
+            <Ionicons name="volume-high" size={18} color="#fff" />
+          </LinearGradient>
+          <Text style={settingsStyles.settingText}>Sound Effects</Text>
+        </View>
+        <Switch
+          value={soundEnabled}
+          onValueChange={() => setSoundEnabled(!soundEnabled)}
+          thumbColor={"#fff"}
+          trackColor={{ false: colors.border, true: colors.primary }}
           ios_backgroundColor={colors.border}
         />
       </View>
@@ -54,8 +86,11 @@ const Preferences = () => {
       {/* AUTO-SYNC */}
       <View style={settingsStyles.settingItem}>
         <View style={settingsStyles.settingLeft}>
-          <LinearGradient colors={colors.gradients.success} style={settingsStyles.settingIcon}>
-            <Ionicons name="notifications" size={18} color="#fff" />
+          <LinearGradient
+            colors={colors.gradients.success}
+            style={settingsStyles.settingIcon}
+          >
+            <Ionicons name="sync" size={18} color="#fff" />
           </LinearGradient>
           <Text style={settingsStyles.settingText}>Auto Sync</Text>
         </View>
