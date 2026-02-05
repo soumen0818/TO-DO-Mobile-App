@@ -181,6 +181,17 @@ export const updateTodo = mutation({
     if (args.recurringPattern !== undefined)
       updates.recurringPattern = args.recurringPattern;
 
+    // If a completed todo is being changed to recurring, reset it immediately
+    // so the user can start fresh with the recurring cycle
+    if (
+      args.isRecurring === true &&
+      !todo.isRecurring &&
+      todo.isCompleted
+    ) {
+      updates.isCompleted = false;
+      updates.completedAt = undefined;
+    }
+
     await ctx.db.patch(args.id, updates);
   },
 });
@@ -216,10 +227,49 @@ export const getUserStats = query({
     const completed = todos.filter((t) => t.isCompleted).length;
     const active = total - completed;
 
+    // Get todos by category
+    const dailyTodos = todos.filter((t) => t.category === "daily");
+    const weeklyTodos = todos.filter((t) => t.category === "weekly");
+    const monthlyTodos = todos.filter((t) => t.category === "monthly");
+    const othersTodos = todos.filter((t) => t.category === undefined);
+
     const byCategory = {
-      daily: todos.filter((t) => t.category === "daily").length,
-      weekly: todos.filter((t) => t.category === "weekly").length,
-      monthly: todos.filter((t) => t.category === "monthly").length,
+      daily: dailyTodos.length,
+      weekly: weeklyTodos.length,
+      monthly: monthlyTodos.length,
+      others: othersTodos.length,
+    };
+
+    // Per-category completion stats
+    const byCategoryStats = {
+      daily: {
+        total: dailyTodos.length,
+        completed: dailyTodos.filter((t) => t.isCompleted).length,
+        completionRate: dailyTodos.length > 0
+          ? Math.round((dailyTodos.filter((t) => t.isCompleted).length / dailyTodos.length) * 100)
+          : 0,
+      },
+      weekly: {
+        total: weeklyTodos.length,
+        completed: weeklyTodos.filter((t) => t.isCompleted).length,
+        completionRate: weeklyTodos.length > 0
+          ? Math.round((weeklyTodos.filter((t) => t.isCompleted).length / weeklyTodos.length) * 100)
+          : 0,
+      },
+      monthly: {
+        total: monthlyTodos.length,
+        completed: monthlyTodos.filter((t) => t.isCompleted).length,
+        completionRate: monthlyTodos.length > 0
+          ? Math.round((monthlyTodos.filter((t) => t.isCompleted).length / monthlyTodos.length) * 100)
+          : 0,
+      },
+      others: {
+        total: othersTodos.length,
+        completed: othersTodos.filter((t) => t.isCompleted).length,
+        completionRate: othersTodos.length > 0
+          ? Math.round((othersTodos.filter((t) => t.isCompleted).length / othersTodos.length) * 100)
+          : 0,
+      },
     };
 
     const byPriority = {
@@ -233,6 +283,7 @@ export const getUserStats = query({
       completed,
       active,
       byCategory,
+      byCategoryStats,
       byPriority,
       completionRate: total > 0 ? Math.round((completed / total) * 100) : 0,
     };

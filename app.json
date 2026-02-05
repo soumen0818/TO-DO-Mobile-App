@@ -27,6 +27,14 @@
     "plugins": [
       "expo-router",
       [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/todo-app-logo.png",
+          "color": "#3B82F6",
+          "sounds": []
+        }
+      ],
+      [
         "expo-splash-screen",
         {
           "image": "./assets/images/todo-app-logo.png",

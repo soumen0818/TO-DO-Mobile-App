@@ -1,13 +1,14 @@
+import CustomAlert from "@/components/CustomAlert";
 import { api } from "@/convex/_generated/api";
 import { Doc } from "@/convex/_generated/dataModel";
 import useTheme from "@/hooks/useTheme";
+import { useNotifications } from "@/hooks/useNotifications";
 import { useUser } from "@clerk/clerk-expo";
 import { Ionicons } from "@expo/vector-icons";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { useMutation } from "convex/react";
 import { useEffect, useState } from "react";
 import {
-    Alert,
     Modal,
     ScrollView,
     StyleSheet,
@@ -15,6 +16,9 @@ import {
     TextInput,
     TouchableOpacity,
     View,
+    KeyboardAvoidingView,
+    Platform,
+    ActivityIndicator,
 } from "react-native";
 
 type Todo = Doc<"todos">;
@@ -23,11 +27,13 @@ interface EditTodoModalProps {
   visible: boolean;
   onClose: () => void;
   todo: Todo | null;
+  onSuccess?: () => void;
 }
 
-const EditTodoModal = ({ visible, onClose, todo }: EditTodoModalProps) => {
+const EditTodoModal = ({ visible, onClose, todo, onSuccess }: EditTodoModalProps) => {
   const { colors } = useTheme();
   const { user } = useUser();
+  const { scheduleAllTodoNotifications, cancelTodoNotifications } = useNotifications();
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -45,6 +51,23 @@ const EditTodoModal = ({ visible, onClose, todo }: EditTodoModalProps) => {
   const [recurringPattern, setRecurringPattern] = useState<
     "daily" | "weekly" | "monthly"
   >("daily");
+  const [isLoading, setIsLoading] = useState(false);
+  const [alertConfig, setAlertConfig] = useState<{
+    visible: boolean;
+    title: string;
+    message: string;
+    buttons: {
+      text: string;
+      onPress?: () => void;
+      style?: "default" | "cancel" | "destructive";
+    }[];
+    type?: "info" | "warning" | "error" | "success";
+  }>({
+    visible: false,
+    title: "",
+    message: "",
+    buttons: [],
+  });
 
   const updateTodo = useMutation(api.todos.updateTodo);
 
@@ -94,40 +117,85 @@ const EditTodoModal = ({ visible, onClose, todo }: EditTodoModalProps) => {
     }
   }, [category, isRecurring]);
 
-  const parseTimeString = (timeStr: string): Date => {
-    const date = new Date();
-    const [time, period] = timeStr.split(" ");
-    let [hours, minutes] = time.split(":").map(Number);
-    if (period === "PM" && hours !== 12) hours += 12;
-    if (period === "AM" && hours === 12) hours = 0;
-    date.setHours(hours, minutes, 0, 0);
-    return date;
+  const parseTimeString = (timeStr: string): Date | undefined => {
+    try {
+      const date = new Date();
+      const parts = timeStr.trim().split(" ");
+      if (parts.length < 1) return undefined;
+      
+      const time = parts[0];
+      const period = parts[1]; // AM/PM (may be undefined for 24h format)
+      const timeParts = time.split(":");
+      if (timeParts.length < 2) return undefined;
+      
+      let hours = parseInt(timeParts[0], 10);
+      const minutes = parseInt(timeParts[1], 10);
+      
+      if (isNaN(hours) || isNaN(minutes)) return undefined;
+      
+      if (period === "PM" && hours !== 12) hours += 12;
+      if (period === "AM" && hours === 12) hours = 0;
+      
+      date.setHours(hours, minutes, 0, 0);
+      return date;
+    } catch {
+      console.log("Failed to parse time string:", timeStr);
+      return undefined;
+    }
   };
 
   const handleUpdate = async () => {
     if (title.trim() && user && todo) {
       // Validate category-specific requirements
       if (category === "weekly" && weekDay === undefined) {
-        Alert.alert(
-          "Required Field",
-          "Please select a weekday for weekly tasks.",
-        );
+        setAlertConfig({
+          visible: true,
+          title: "Required Field",
+          message: "Please select a weekday for weekly tasks.",
+          buttons: [
+            {
+              text: "OK",
+              onPress: () => setAlertConfig({ ...alertConfig, visible: false }),
+            },
+          ],
+          type: "warning",
+        });
         return;
       }
       if (category === "monthly" && dayOfMonth === undefined) {
-        Alert.alert("Required Field", "Please select a day for monthly tasks.");
+        setAlertConfig({
+          visible: true,
+          title: "Required Field",
+          message: "Please select a day for monthly tasks.",
+          buttons: [
+            {
+              text: "OK",
+              onPress: () => setAlertConfig({ ...alertConfig, visible: false }),
+            },
+          ],
+          type: "warning",
+        });
         return;
       }
 
       // Validate recurring pattern matches category
       if (isRecurring && recurringPattern !== category) {
-        Alert.alert(
-          "Invalid Configuration",
-          `Recurring pattern must match the category. Please set recurring pattern to "${category}".`,
-        );
+        setAlertConfig({
+          visible: true,
+          title: "Invalid Configuration",
+          message: `Recurring pattern must match the category. Please set recurring pattern to "${category}".`,
+          buttons: [
+            {
+              text: "OK",
+              onPress: () => setAlertConfig({ ...alertConfig, visible: false }),
+            },
+          ],
+          type: "warning",
+        });
         return;
       }
 
+      setIsLoading(true);
       try {
         // Prepare date/time based on category
         let finalDueDate: number | undefined;
@@ -161,6 +229,15 @@ const EditTodoModal = ({ visible, onClose, todo }: EditTodoModalProps) => {
                 minute: "2-digit",
               })
             : undefined;
+        } else {
+          // Others (undefined category): store timestamp and time
+          finalDueDate = dueDate ? dueDate.getTime() : undefined;
+          finalDueTime = dueTime
+            ? dueTime.toLocaleTimeString("en-US", {
+                hour: "2-digit",
+                minute: "2-digit",
+              })
+            : undefined;
         }
 
         await updateTodo({
@@ -175,10 +252,36 @@ const EditTodoModal = ({ visible, onClose, todo }: EditTodoModalProps) => {
           isRecurring: isRecurring,
           recurringPattern: isRecurring ? recurringPattern : undefined,
         });
+
+        // Reschedule notifications for the updated todo
+        await cancelTodoNotifications(todo._id);
+        await scheduleAllTodoNotifications(
+          todo._id,
+          title.trim(),
+          category,
+          todo.createdAt,
+          finalDueDate,
+          finalDueTime,
+          todo.isCompleted
+        );
+
         onClose();
-      } catch (error) {
-        console.log("Error updating todo", error);
-        Alert.alert("Error", "Failed to update todo");
+        onSuccess?.();
+      } catch {
+        setAlertConfig({
+          visible: true,
+          title: "Error",
+          message: "Failed to update todo",
+          buttons: [
+            {
+              text: "OK",
+              onPress: () => setAlertConfig({ ...alertConfig, visible: false }),
+            },
+          ],
+          type: "error",
+        });
+      } finally {
+        setIsLoading(false);
       }
     }
   };
@@ -192,7 +295,11 @@ const EditTodoModal = ({ visible, onClose, todo }: EditTodoModalProps) => {
       transparent={true}
       onRequestClose={onClose}
     >
-      <View style={styles.modalOverlay}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        style={{ flex: 1 }}
+      >
+        <View style={styles.modalOverlay}>
         <View
           style={[styles.modalContent, { backgroundColor: colors.surface }]}
         >
@@ -275,7 +382,16 @@ const EditTodoModal = ({ visible, onClose, todo }: EditTodoModalProps) => {
             </View>
 
             {/* Category */}
-            <Text style={[styles.label, { color: colors.text }]}>Category</Text>
+            <View style={styles.labelWithClear}>
+              <Text style={[styles.label, { color: colors.text }]}>Category</Text>
+              {category && (
+                <TouchableOpacity onPress={() => setCategory(undefined)}>
+                  <Text style={[styles.clearButton, { color: colors.primary }]}>
+                    Clear
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
             <View style={styles.optionsRow}>
               {(["daily", "weekly", "monthly"] as const).map((c) => (
                 <TouchableOpacity
@@ -353,6 +469,7 @@ const EditTodoModal = ({ visible, onClose, todo }: EditTodoModalProps) => {
             {/* Date & Time - Category Based */}
             <View style={styles.labelWithClear}>
               <Text style={[styles.label, { color: colors.text }]}>
+                {!category && "Due Date & Time (optional)"}
                 {category === "daily" && "Due Time (optional)"}
                 {category === "weekly" && "Weekday & Time"}
                 {category === "monthly" && "Day & Time"}
@@ -360,7 +477,8 @@ const EditTodoModal = ({ visible, onClose, todo }: EditTodoModalProps) => {
               {((category === "daily" && dueTime) ||
                 (category === "weekly" && (weekDay !== undefined || dueTime)) ||
                 (category === "monthly" &&
-                  (dayOfMonth !== undefined || dueTime))) && (
+                  (dayOfMonth !== undefined || dueTime)) ||
+                (!category && (dueDate || dueTime))) && (
                 <TouchableOpacity
                   onPress={() => {
                     setDueDate(undefined);
@@ -375,6 +493,52 @@ const EditTodoModal = ({ visible, onClose, todo }: EditTodoModalProps) => {
                 </TouchableOpacity>
               )}
             </View>
+
+            {/* No Category (Others): Show Date + Time */}
+            {!category && (
+              <View style={styles.dateTimeRow}>
+                <TouchableOpacity
+                  style={[
+                    styles.dateButton,
+                    {
+                      backgroundColor: colors.backgrounds.input,
+                      borderColor: colors.border,
+                    },
+                  ]}
+                  onPress={() => setShowDatePicker(true)}
+                >
+                  <Ionicons
+                    name="calendar-outline"
+                    size={20}
+                    color={colors.text}
+                  />
+                  <Text style={[styles.dateText, { color: colors.text }]}>
+                    {dueDate ? dueDate.toLocaleDateString() : "Select Date"}
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.dateButton,
+                    {
+                      backgroundColor: colors.backgrounds.input,
+                      borderColor: colors.border,
+                    },
+                  ]}
+                  onPress={() => setShowTimePicker(true)}
+                >
+                  <Ionicons name="time-outline" size={20} color={colors.text} />
+                  <Text style={[styles.dateText, { color: colors.text }]}>
+                    {dueTime
+                      ? dueTime.toLocaleTimeString("en-US", {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })
+                      : "Select Time"}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
 
             {/* Daily Category: Show only Time */}
             {category === "daily" && (
@@ -539,16 +703,31 @@ const EditTodoModal = ({ visible, onClose, todo }: EditTodoModalProps) => {
             style={[
               styles.updateButton,
               {
-                backgroundColor: title.trim() ? colors.primary : colors.border,
+                backgroundColor: title.trim() && !isLoading ? colors.primary : colors.border,
+                opacity: isLoading ? 0.7 : 1,
               },
             ]}
             onPress={handleUpdate}
-            disabled={!title.trim()}
+            disabled={!title.trim() || isLoading}
           >
-            <Text style={styles.updateButtonText}>Update Task</Text>
+            {isLoading ? (
+              <ActivityIndicator color="#FFFFFF" size="small" />
+            ) : (
+              <Text style={styles.updateButtonText}>Update Task</Text>
+            )}
           </TouchableOpacity>
         </View>
       </View>
+      </KeyboardAvoidingView>
+
+      {/* Custom Alert */}
+      <CustomAlert
+        visible={alertConfig.visible}
+        title={alertConfig.title}
+        message={alertConfig.message}
+        buttons={alertConfig.buttons}
+        type={alertConfig.type}
+      />
     </Modal>
   );
 };

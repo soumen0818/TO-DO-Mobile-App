@@ -1,16 +1,20 @@
 import { createSettingsStyles } from "@/assets/styles/settings.styles";
+import { useSettings } from "@/contexts/SettingsContext";
 import useTheme from "@/hooks/useTheme";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
-import { useState } from "react";
 import { Switch, Text, View } from "react-native";
 
 const Preferences = () => {
-  const [isAutoSync, setIsAutoSync] = useState(true);
-  const [isNotificationsEnabled, setIsNotificationsEnabled] = useState(true);
-  const [soundEnabled, setSoundEnabled] = useState(true);
-
   const { isDarkMode, toggleDarkMode, colors } = useTheme();
+  const {
+    isAutoSync,
+    toggleAutoSync,
+    notificationsEnabled,
+    toggleNotifications,
+    hapticsEnabled,
+    toggleHaptics,
+  } = useSettings();
 
   const settingsStyles = createSettingsStyles(colors);
 
@@ -53,30 +57,28 @@ const Preferences = () => {
           <Text style={settingsStyles.settingText}>Notifications</Text>
         </View>
         <Switch
-          value={isNotificationsEnabled}
-          onValueChange={() =>
-            setIsNotificationsEnabled(!isNotificationsEnabled)
-          }
+          value={notificationsEnabled}
+          onValueChange={toggleNotifications}
           thumbColor={"#fff"}
           trackColor={{ false: colors.border, true: colors.warning }}
           ios_backgroundColor={colors.border}
         />
       </View>
 
-      {/* SOUND */}
+      {/* HAPTICS */}
       <View style={settingsStyles.settingItem}>
         <View style={settingsStyles.settingLeft}>
           <LinearGradient
             colors={colors.gradients.primary}
             style={settingsStyles.settingIcon}
           >
-            <Ionicons name="volume-high" size={18} color="#fff" />
+            <Ionicons name="phone-portrait-outline" size={18} color="#fff" />
           </LinearGradient>
-          <Text style={settingsStyles.settingText}>Sound Effects</Text>
+          <Text style={settingsStyles.settingText}>Vibration</Text>
         </View>
         <Switch
-          value={soundEnabled}
-          onValueChange={() => setSoundEnabled(!soundEnabled)}
+          value={hapticsEnabled}
+          onValueChange={toggleHaptics}
           thumbColor={"#fff"}
           trackColor={{ false: colors.border, true: colors.primary }}
           ios_backgroundColor={colors.border}
@@ -96,7 +98,7 @@ const Preferences = () => {
         </View>
         <Switch
           value={isAutoSync}
-          onValueChange={() => setIsAutoSync(!isAutoSync)}
+          onValueChange={toggleAutoSync}
           thumbColor={"#fff"}
           trackColor={{ false: colors.border, true: colors.success }}
           ios_backgroundColor={colors.border}

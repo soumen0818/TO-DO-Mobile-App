@@ -1,6 +1,7 @@
 import { createSettingsStyles } from "@/assets/styles/settings.styles";
 import { api } from "@/convex/_generated/api";
 import useTheme from "@/hooks/useTheme";
+import { useUser } from "@clerk/clerk-expo";
 import { Ionicons } from "@expo/vector-icons";
 import { useQuery } from "convex/react";
 import { LinearGradient } from "expo-linear-gradient";
@@ -9,14 +10,21 @@ import { Text, View } from "react-native";
 const ProgressStats = () => {
   const { colors } = useTheme();
   const settingsStyles = createSettingsStyles(colors);
+  const { user } = useUser();
 
-  const todos = useQuery(api.todos.getTodos);
-  const totalTodos = todos ? todos.length : 0;
-  const completedTodos = todos ? todos.filter((todo) => todo.isCompleted).length : 0;
-  const activeTodos = totalTodos - completedTodos;
+  const stats = useQuery(
+    api.todos.getUserStats,
+    user ? { userId: user.id } : "skip",
+  );
+  const totalTodos = stats?.total || 0;
+  const completedTodos = stats?.completed || 0;
+  const activeTodos = stats?.active || 0;
 
   return (
-    <LinearGradient colors={colors.gradients.surface} style={settingsStyles.section}>
+    <LinearGradient
+      colors={colors.gradients.surface}
+      style={settingsStyles.section}
+    >
       <Text style={settingsStyles.sectionTitle}>Progress Stats</Text>
 
       <View style={settingsStyles.statsContainer}>
@@ -26,7 +34,10 @@ const ProgressStats = () => {
           style={[settingsStyles.statCard, { borderLeftColor: colors.primary }]}
         >
           <View style={settingsStyles.statIconContainer}>
-            <LinearGradient colors={colors.gradients.primary} style={settingsStyles.statIcon}>
+            <LinearGradient
+              colors={colors.gradients.primary}
+              style={settingsStyles.statIcon}
+            >
               <Ionicons name="list" size={20} color="#fff" />
             </LinearGradient>
           </View>
@@ -43,7 +54,10 @@ const ProgressStats = () => {
           style={[settingsStyles.statCard, { borderLeftColor: colors.success }]}
         >
           <View style={settingsStyles.statIconContainer}>
-            <LinearGradient colors={colors.gradients.success} style={settingsStyles.statIcon}>
+            <LinearGradient
+              colors={colors.gradients.success}
+              style={settingsStyles.statIcon}
+            >
               <Ionicons name="checkmark-circle" size={20} color="#fff" />
             </LinearGradient>
           </View>
@@ -61,7 +75,10 @@ const ProgressStats = () => {
           style={[settingsStyles.statCard, { borderLeftColor: colors.warning }]}
         >
           <View style={settingsStyles.statIconContainer}>
-            <LinearGradient colors={colors.gradients.warning} style={settingsStyles.statIcon}>
+            <LinearGradient
+              colors={colors.gradients.warning}
+              style={settingsStyles.statIcon}
+            >
               <Ionicons name="time" size={20} color="#fff" />
             </LinearGradient>
           </View>

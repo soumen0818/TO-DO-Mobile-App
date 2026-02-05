@@ -2,10 +2,12 @@ import useTheme from "@/hooks/useTheme";
 import { useUser } from "@clerk/clerk-expo";
 import { Ionicons } from "@expo/vector-icons";
 import { Redirect, Tabs } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const TabsLayout = () => {
   const { colors } = useTheme();
   const { user, isLoaded } = useUser();
+  const insets = useSafeAreaInsets();
 
   // Show nothing while loading
   if (!isLoaded) {
@@ -17,6 +19,10 @@ const TabsLayout = () => {
     return <Redirect href="/sign-in" />;
   }
 
+  // Calculate tab bar height based on bottom inset (button nav vs gesture nav)
+  const bottomInset = insets.bottom > 0 ? insets.bottom : 10;
+  const tabBarHeight = 60 + bottomInset;
+
   return (
     <Tabs
       screenOptions={{
@@ -26,8 +32,8 @@ const TabsLayout = () => {
           backgroundColor: colors.surface,
           borderTopWidth: 1,
           borderTopColor: colors.border,
-          height: 90,
-          paddingBottom: 30,
+          height: tabBarHeight,
+          paddingBottom: bottomInset,
           paddingTop: 10,
         },
         tabBarLabelStyle: {

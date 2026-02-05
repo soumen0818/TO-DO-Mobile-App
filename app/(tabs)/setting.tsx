@@ -1,5 +1,5 @@
 import { createSettingsStyles } from "@/assets/styles/settings.styles";
-import DangerZone from "@/components/DangerZone";
+import OtherSettings from "@/components/OtherSettings";
 import Preferences from "@/components/Preferences";
 import useTheme from "@/hooks/useTheme";
 import { Ionicons } from "@expo/vector-icons";
@@ -18,7 +18,7 @@ const SettingsScreen = () => {
       colors={colors.gradients.background}
       style={settingsStyles.container}
     >
-      <SafeAreaView style={settingsStyles.safeArea}>
+      <SafeAreaView style={settingsStyles.safeArea} edges={["top"]}>
         {/* HEADER */}
         <View style={settingsStyles.header}>
           <View style={settingsStyles.titleContainer}>
@@ -38,7 +38,7 @@ const SettingsScreen = () => {
           showsVerticalScrollIndicator={false}
         >
           <Preferences />
-          <DangerZone />
+          <OtherSettings />
         </ScrollView>
       </SafeAreaView>
     </LinearGradient>

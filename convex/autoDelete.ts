@@ -205,3 +205,111 @@ export const deleteMyExpiredTodos = mutation({
     return { deletedCount, message: `Deleted ${deletedCount} expired todos` };
   },
 });
+
+// Check if a recurring todo should be reset based on its pattern
+function shouldResetRecurringTodo(
+  todo: {
+    isCompleted: boolean;
+    isRecurring?: boolean;
+    recurringPattern?: string;
+    category?: "daily" | "weekly" | "monthly";
+    completedAt?: number;
+    dueDate?: number; // For weekly: weekday (0-6), for monthly: day of month (1-31)
+  },
+): boolean {
+  // Only reset completed recurring todos
+  if (!todo.isRecurring || !todo.isCompleted || !todo.completedAt) {
+    return false;
+  }
+
+  const now = new Date();
+  const completedAt = new Date(todo.completedAt);
+  const pattern = todo.recurringPattern || todo.category || "daily";
+
+  switch (pattern) {
+    case "daily": {
+      // Reset if completed on a previous day
+      const isNewDay =
+        completedAt.getDate() !== now.getDate() ||
+        completedAt.getMonth() !== now.getMonth() ||
+        completedAt.getFullYear() !== now.getFullYear();
+      return isNewDay;
+    }
+
+    case "weekly": {
+      // Reset if it's a new week occurrence
+      // If dueDate is set (weekday 0-6), reset when that weekday arrives after completion
+      if (todo.dueDate !== undefined && todo.dueDate <= 6) {
+        const targetWeekday = todo.dueDate;
+        const currentWeekday = now.getDay();
+
+        // Check if we're on or past the target weekday in a new week
+        if (currentWeekday === targetWeekday) {
+          // It's the target day - reset if completed before today
+          return (
+            completedAt.getDate() !== now.getDate() ||
+            completedAt.getMonth() !== now.getMonth() ||
+            completedAt.getFullYear() !== now.getFullYear()
+          );
+        }
+      } else {
+        // No specific weekday set - reset every 7 days
+        const daysSinceCompletion = Math.floor(
+          (now.getTime() - completedAt.getTime()) / (24 * 60 * 60 * 1000),
+        );
+        return daysSinceCompletion >= 7;
+      }
+      return false;
+    }
+
+    case "monthly": {
+      // Reset if it's a new month occurrence
+      // If dueDate is set (day 1-31), reset when that day arrives in a new month
+      if (todo.dueDate !== undefined && todo.dueDate >= 1 && todo.dueDate <= 31) {
+        const targetDay = todo.dueDate;
+        const currentDay = now.getDate();
+
+        if (currentDay === targetDay) {
+          // It's the target day - reset if completed in a previous month (or earlier)
+          return (
+            completedAt.getMonth() !== now.getMonth() ||
+            completedAt.getFullYear() !== now.getFullYear()
+          );
+        }
+      } else {
+        // No specific day set - reset every 30 days
+        const daysSinceCompletion = Math.floor(
+          (now.getTime() - completedAt.getTime()) / (24 * 60 * 60 * 1000),
+        );
+        return daysSinceCompletion >= 30;
+      }
+      return false;
+    }
+
+    default:
+      return false;
+  }
+}
+
+// Internal mutation to reset completed recurring todos (called by cron)
+export const resetRecurringTodos = internalMutation({
+  handler: async (ctx) => {
+    const todos = await ctx.db.query("todos").collect();
+
+    let resetCount = 0;
+
+    for (const todo of todos) {
+      if (shouldResetRecurringTodo(todo)) {
+        await ctx.db.patch(todo._id, {
+          isCompleted: false,
+          completedAt: undefined,
+          updatedAt: Date.now(),
+        });
+        resetCount++;
+      }
+    }
+
+    console.log(`Reset ${resetCount} recurring todos for new cycle`);
+    return { resetCount };
+  },
+});

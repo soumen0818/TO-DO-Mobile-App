@@ -43,7 +43,7 @@ export const createSettingsStyles = (colors: ColorScheme) => {
     content: {
       paddingHorizontal: 20,
       gap: 20,
-      paddingBottom: 120,
+      paddingBottom: 0,
     },
     section: {
       borderRadius: 20,

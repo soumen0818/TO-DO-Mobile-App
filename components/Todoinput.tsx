@@ -1,53 +1,971 @@
-import { createHomeStyles } from "@/assets/styles/home.styles";
+import CustomAlert from "@/components/CustomAlert";
 import { api } from "@/convex/_generated/api";
 import useTheme from "@/hooks/useTheme";
+import { useNotifications } from "@/hooks/useNotifications";
+import { useUser } from "@clerk/clerk-expo";
 import { Ionicons } from "@expo/vector-icons";
+import DateTimePicker from "@react-native-community/datetimepicker";
 import { useMutation } from "convex/react";
-import { LinearGradient } from "expo-linear-gradient";
-import { useState } from "react";
-import { Alert, TextInput, TouchableOpacity, View } from "react-native";
+import { useEffect, useState } from "react";
+import {
+  Modal,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+  KeyboardAvoidingView,
+  Platform,
+  ActivityIndicator,
+} from "react-native";
 
-const TodoInput = () => {
+interface TodoInputProps {
+  visible: boolean;
+  onClose: () => void;
+  defaultCategory?: "daily" | "weekly" | "monthly";
+  currentCount: number;
+  onSuccess?: () => void;
+}
+
+const TodoInput = ({
+  visible,
+  onClose,
+  defaultCategory,
+  currentCount,
+  onSuccess,
+}: TodoInputProps) => {
   const { colors } = useTheme();
-  const homeStyles = createHomeStyles(colors);
+  const { user } = useUser();
+  const { scheduleAllTodoNotifications } = useNotifications();
 
-  const [newTodo, setNewTodo] = useState("");
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [priority, setPriority] = useState<
+    "high" | "medium" | "low" | undefined
+  >(undefined);
+  const [category, setCategory] = useState<
+    "daily" | "weekly" | "monthly" | undefined
+  >(undefined);
+  const [dueDate, setDueDate] = useState<Date | undefined>(undefined);
+  const [dueTime, setDueTime] = useState<Date | undefined>(undefined);
+  const [weekDay, setWeekDay] = useState<number | undefined>(undefined); // 0=Sunday, 6=Saturday
+  const [dayOfMonth, setDayOfMonth] = useState<number | undefined>(undefined); // 1-31
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [showTimePicker, setShowTimePicker] = useState(false);
+  const [isRecurring, setIsRecurring] = useState(false);
+  const [recurringPattern, setRecurringPattern] = useState<
+    "daily" | "weekly" | "monthly"
+  >("daily");
+  const [isLoading, setIsLoading] = useState(false);
+  const [alertConfig, setAlertConfig] = useState<{
+    visible: boolean;
+    title: string;
+    message: string;
+    buttons: {
+      text: string;
+      onPress?: () => void;
+      style?: "default" | "cancel" | "destructive";
+    }[];
+    type?: "info" | "warning" | "error" | "success";
+  }>({
+    visible: false,
+    title: "",
+    message: "",
+    buttons: [],
+  });
+
+  // Update recurring pattern when category changes
+  useEffect(() => {
+    if (category && isRecurring) {
+      setRecurringPattern(category);
+    }
+  }, [category, isRecurring]);
+
   const addTodo = useMutation(api.todos.addTodo);
 
-  const handleAddTodo = async () => {
-    if (newTodo.trim()) {
+  const resetForm = () => {
+    setTitle("");
+    setDescription("");
+    setPriority(undefined);
+    setCategory(undefined);
+    setDueDate(undefined);
+    setDueTime(undefined);
+    setWeekDay(undefined);
+    setDayOfMonth(undefined);
+    setIsRecurring(false);
+    setRecurringPattern("daily");
+  };
+
+  const proceedWithAddTodo = async () => {
+    if (title.trim() && user) {
+      setIsLoading(true);
       try {
-        await addTodo({ text: newTodo.trim() });
-        setNewTodo("");
+        // Prepare date/time based on category
+        let finalDueDate: number | undefined;
+        let finalDueTime: string | undefined;
+
+        if (category === "daily") {
+          // Daily: optional date, time required
+          finalDueDate = dueDate ? dueDate.getTime() : undefined;
+          finalDueTime = dueTime
+            ? dueTime.toLocaleTimeString("en-US", {
+                hour: "2-digit",
+                minute: "2-digit",
+              })
+            : undefined;
+        } else if (category === "weekly") {
+          // Weekly: store weekday (0-6) and time
+          if (weekDay !== undefined) {
+            finalDueDate = weekDay; // Store weekday as number
+          }
+          finalDueTime = dueTime
+            ? dueTime.toLocaleTimeString("en-US", {
+                hour: "2-digit",
+                minute: "2-digit",
+              })
+            : undefined;
+        } else if (category === "monthly") {
+          // Monthly: store day of month (1-31) and time
+          if (dayOfMonth !== undefined) {
+            finalDueDate = dayOfMonth; // Store day as number
+          }
+          finalDueTime = dueTime
+            ? dueTime.toLocaleTimeString("en-US", {
+                hour: "2-digit",
+                minute: "2-digit",
+              })
+            : undefined;
+        } else if (!category) {
+          // Others (undefined): store timestamp and time
+          finalDueDate = dueDate ? dueDate.getTime() : undefined;
+          finalDueTime = dueTime
+            ? dueTime.toLocaleTimeString("en-US", {
+                hour: "2-digit",
+                minute: "2-digit",
+              })
+            : undefined;
+        }
+
+        const todoId = await addTodo({
+          userId: user.id,
+          title: title.trim(),
+          description: description.trim() || undefined,
+          priority: priority!,
+          category,
+          dueDate: finalDueDate,
+          dueTime: finalDueTime,
+          isRecurring: isRecurring,
+          recurringPattern: isRecurring ? recurringPattern : undefined,
+        });
+
+        // Schedule notifications for the new todo
+        if (todoId) {
+          const createdAt = Date.now();
+          await scheduleAllTodoNotifications(
+            todoId,
+            title.trim(),
+            category,
+            createdAt,
+            finalDueDate,
+            finalDueTime,
+            false
+          );
+        }
+
+        resetForm();
+        onClose();
+        onSuccess?.();
       } catch (error) {
         console.log("Error adding a todo", error);
-        Alert.alert("Error", "Failed to add todo");
+        setAlertConfig({
+          visible: true,
+          title: "Error",
+          message: "Failed to add todo",
+          buttons: [
+            {
+              text: "OK",
+              onPress: () => setAlertConfig({ ...alertConfig, visible: false }),
+            },
+          ],
+          type: "error",
+        });
+      } finally {
+        setIsLoading(false);
       }
     }
   };
 
+  const handleAddTodo = async () => {
+    if (title.trim() && user) {
+      // Validate required fields
+      if (!priority) {
+        setAlertConfig({
+          visible: true,
+          title: "Required Field",
+          message: "Please select a priority level.",
+          buttons: [
+            {
+              text: "OK",
+              onPress: () => setAlertConfig({ ...alertConfig, visible: false }),
+            },
+          ],
+          type: "warning",
+        });
+        return;
+      }
+
+      // Warning for undefined category without date/time
+      if (!category && (!dueDate || !dueTime)) {
+        setAlertConfig({
+          visible: true,
+          title: "⚠️ No Date/Time Set",
+          message:
+            "Without a category, this todo will be automatically deleted within 24 hours if you don't set a date and time. Do you want to continue?",
+          buttons: [
+            {
+              text: "Cancel",
+              style: "cancel",
+              onPress: () => setAlertConfig({ ...alertConfig, visible: false }),
+            },
+            {
+              text: "Continue Anyway",
+              onPress: () => {
+                setAlertConfig({ ...alertConfig, visible: false });
+                proceedWithAddTodo();
+              },
+            },
+          ],
+          type: "warning",
+        });
+        return;
+      }
+
+      // Validate category-specific requirements
+      if (category === "weekly" && weekDay === undefined) {
+        setAlertConfig({
+          visible: true,
+          title: "Required Field",
+          message: "Please select a weekday for weekly tasks.",
+          buttons: [
+            {
+              text: "OK",
+              onPress: () => setAlertConfig({ ...alertConfig, visible: false }),
+            },
+          ],
+          type: "warning",
+        });
+        return;
+      }
+      if (category === "monthly" && dayOfMonth === undefined) {
+        setAlertConfig({
+          visible: true,
+          title: "Required Field",
+          message: "Please select a day for monthly tasks.",
+          buttons: [
+            {
+              text: "OK",
+              onPress: () => setAlertConfig({ ...alertConfig, visible: false }),
+            },
+          ],
+          type: "warning",
+        });
+        return;
+      }
+
+      // Validate recurring pattern matches category
+      if (category && isRecurring && recurringPattern !== category) {
+        setAlertConfig({
+          visible: true,
+          title: "Invalid Configuration",
+          message: `Recurring pattern must match the category. Please set recurring pattern to "${category}".`,
+          buttons: [
+            {
+              text: "OK",
+              onPress: () => setAlertConfig({ ...alertConfig, visible: false }),
+            },
+          ],
+          type: "error",
+        });
+        return;
+      }
+
+      // Check category limits (only if category is selected)
+      if (category) {
+        const limits = { daily: 10, weekly: 20, monthly: 30 };
+        const currentLimit = limits[category];
+
+        if (currentCount >= currentLimit) {
+          setAlertConfig({
+            visible: true,
+            title: "Limit Reached",
+            message: `You have reached the maximum limit of ${currentLimit} todos for the ${category} category. Please delete some existing todos or select a different category to continue.`,
+            buttons: [
+              {
+                text: "Got it",
+                onPress: () =>
+                  setAlertConfig({ ...alertConfig, visible: false }),
+              },
+            ],
+            type: "warning",
+          });
+          return;
+        }
+      }
+
+      // Proceed with adding todo
+      await proceedWithAddTodo();
+    }
+  };
+
   return (
-    <View style={homeStyles.inputSection}>
-      <View style={homeStyles.inputWrapper}>
-        <TextInput
-          style={homeStyles.input}
-          placeholder="What needs to be done?"
-          value={newTodo}
-          onChangeText={setNewTodo}
-          onSubmitEditing={handleAddTodo}
-          placeholderTextColor={colors.textMuted}
-        />
-        <TouchableOpacity onPress={handleAddTodo} activeOpacity={0.8} disabled={!newTodo.trim()}>
-          <LinearGradient
-            colors={newTodo.trim() ? colors.gradients.primary : colors.gradients.muted}
-            style={[homeStyles.addButton, !newTodo.trim() && homeStyles.addButtonDisabled]}
+    <Modal
+      visible={visible}
+      animationType="slide"
+      transparent={true}
+      onRequestClose={onClose}
+    >
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        style={{ flex: 1 }}
+      >
+        <View style={styles.modalOverlay}>
+          <View
+            style={[styles.modalContent, { backgroundColor: colors.surface }]}
           >
-            <Ionicons name="add" size={24} color="#ffffff" />
-          </LinearGradient>
-        </TouchableOpacity>
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>
+                Create New Task
+              </Text>
+              <TouchableOpacity onPress={onClose}>
+                <Ionicons name="close" size={24} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView
+              style={styles.modalBody}
+              showsVerticalScrollIndicator={false}
+            >
+            {/* Title */}
+            <TextInput
+              style={[
+                styles.input,
+                {
+                  backgroundColor: colors.backgrounds.input,
+                  color: colors.text,
+                  borderColor: colors.border,
+                },
+              ]}
+              placeholder="Task Title *"
+              value={title}
+              onChangeText={setTitle}
+              placeholderTextColor={colors.textMuted}
+            />
+
+            {/* Description */}
+            <View>
+              <TextInput
+                style={[
+                  styles.textArea,
+                  {
+                    backgroundColor: colors.backgrounds.input,
+                    color: colors.text,
+                    borderColor: colors.border,
+                  },
+                ]}
+                placeholder="Description (optional)"
+                value={description}
+                onChangeText={setDescription}
+                multiline
+                numberOfLines={3}
+                maxLength={200}
+                placeholderTextColor={colors.textMuted}
+              />
+              <Text style={[styles.charCount, { color: colors.textMuted }]}>
+                {description.length}/200
+              </Text>
+            </View>
+
+            {/* Priority */}
+            <View style={styles.labelWithClear}>
+              <Text style={[styles.label, { color: colors.text }]}>
+                Priority
+              </Text>
+              {priority && (
+                <TouchableOpacity onPress={() => setPriority(undefined)}>
+                  <Text style={[styles.clearButton, { color: colors.primary }]}>
+                    Clear
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            <View style={styles.optionsRow}>
+              {(["high", "medium", "low"] as const).map((p) => (
+                <TouchableOpacity
+                  key={p}
+                  style={[
+                    styles.optionButton,
+                    { borderColor: colors.border },
+                    priority === p && { backgroundColor: colors.primary },
+                  ]}
+                  onPress={() => setPriority(p)}
+                >
+                  <Text
+                    style={[
+                      styles.optionText,
+                      { color: priority === p ? "#fff" : colors.text },
+                    ]}
+                  >
+                    {p.charAt(0).toUpperCase() + p.slice(1)}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {/* Category */}
+            <View style={styles.labelWithClear}>
+              <Text style={[styles.label, { color: colors.text }]}>
+                Category
+              </Text>
+              {category && (
+                <TouchableOpacity onPress={() => setCategory(undefined)}>
+                  <Text style={[styles.clearButton, { color: colors.primary }]}>
+                    Clear
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            <View style={styles.optionsRow}>
+              {(["daily", "weekly", "monthly"] as const).map((c) => (
+                <TouchableOpacity
+                  key={c}
+                  style={[
+                    styles.optionButton,
+                    { borderColor: colors.border },
+                    category === c && { backgroundColor: colors.primary },
+                  ]}
+                  onPress={() => setCategory(c)}
+                >
+                  <Text
+                    style={[
+                      styles.optionText,
+                      { color: category === c ? "#fff" : colors.text },
+                    ]}
+                  >
+                    {c.charAt(0).toUpperCase() + c.slice(1)}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {/* Recurring - Only visible when category is selected */}
+            {category && (
+              <View style={styles.recurringSection}>
+                <View style={styles.recurringHeader}>
+                  <Text style={[styles.label, { color: colors.text }]}>
+                    Recurring Task
+                  </Text>
+                  <TouchableOpacity
+                    style={[
+                      styles.toggleSwitch,
+                      {
+                        backgroundColor: isRecurring
+                          ? colors.primary
+                          : colors.border,
+                      },
+                    ]}
+                    onPress={() => setIsRecurring(!isRecurring)}
+                  >
+                    <View
+                      style={[
+                        styles.toggleThumb,
+                        {
+                          backgroundColor: "#fff",
+                          transform: [{ translateX: isRecurring ? 20 : 0 }],
+                        },
+                      ]}
+                    />
+                  </TouchableOpacity>
+                </View>
+
+                {isRecurring && (
+                  <View style={styles.recurringInfo}>
+                    <Ionicons
+                      name="information-circle"
+                      size={16}
+                      color={colors.primary}
+                    />
+                    <Text
+                      style={[
+                        styles.recurringInfoText,
+                        { color: colors.textMuted },
+                      ]}
+                    >
+                      {category
+                        ? `Recurring pattern will be set to "${category}" to match your selected category.`
+                        : "Recurring pattern will match your selected category."}
+                    </Text>
+                  </View>
+                )}
+              </View>
+            )}
+
+            {/* Date & Time - Category Based or No Category */}
+            <View style={styles.labelWithClear}>
+              <Text style={[styles.label, { color: colors.text }]}>
+                {!category && "Due Date & Time (optional)"}
+                {category === "daily" && "Due Time (optional)"}
+                {category === "weekly" && "Weekday & Time"}
+                {category === "monthly" && "Day & Time"}
+              </Text>
+              {((category === "daily" && dueTime) ||
+                (category === "weekly" && (weekDay !== undefined || dueTime)) ||
+                (category === "monthly" &&
+                  (dayOfMonth !== undefined || dueTime)) ||
+                (!category && (dueDate || dueTime))) && (
+                <TouchableOpacity
+                  onPress={() => {
+                    setDueDate(undefined);
+                    setDueTime(undefined);
+                    setWeekDay(undefined);
+                    setDayOfMonth(undefined);
+                  }}
+                >
+                  <Text style={[styles.clearButton, { color: colors.primary }]}>
+                    Clear
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {/* No Category: Show Date + Time */}
+            {!category && (
+              <View style={styles.dateTimeRow}>
+                <TouchableOpacity
+                  style={[
+                    styles.dateButton,
+                    {
+                      backgroundColor: colors.backgrounds.input,
+                      borderColor: colors.border,
+                    },
+                  ]}
+                  onPress={() => setShowDatePicker(true)}
+                >
+                  <Ionicons
+                    name="calendar-outline"
+                    size={20}
+                    color={colors.text}
+                  />
+                  <Text style={[styles.dateText, { color: colors.text }]}>
+                    {dueDate ? dueDate.toLocaleDateString() : "Select Date"}
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.dateButton,
+                    {
+                      backgroundColor: colors.backgrounds.input,
+                      borderColor: colors.border,
+                    },
+                  ]}
+                  onPress={() => setShowTimePicker(true)}
+                >
+                  <Ionicons name="time-outline" size={20} color={colors.text} />
+                  <Text style={[styles.dateText, { color: colors.text }]}>
+                    {dueTime
+                      ? dueTime.toLocaleTimeString("en-US", {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })
+                      : "Select Time"}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* Daily Category: Show only Time */}
+            {category === "daily" && (
+              <TouchableOpacity
+                style={[
+                  styles.timeButtonFull,
+                  {
+                    backgroundColor: colors.backgrounds.input,
+                    borderColor: colors.border,
+                  },
+                ]}
+                onPress={() => setShowTimePicker(true)}
+              >
+                <Ionicons name="time-outline" size={20} color={colors.text} />
+                <Text style={[styles.dateText, { color: colors.text }]}>
+                  {dueTime
+                    ? dueTime.toLocaleTimeString("en-US", {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })
+                    : "Select Time"}
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            {/* Weekly Category: Weekday Selector + Time */}
+            {category === "weekly" && (
+              <>
+                <View style={styles.weekdayGrid}>
+                  {[
+                    "Sunday",
+                    "Monday",
+                    "Tuesday",
+                    "Wednesday",
+                    "Thursday",
+                    "Friday",
+                    "Saturday",
+                  ].map((day, index) => (
+                    <TouchableOpacity
+                      key={day}
+                      style={[
+                        styles.weekdayButton,
+                        { borderColor: colors.border },
+                        weekDay === index && {
+                          backgroundColor: colors.primary,
+                        },
+                      ]}
+                      onPress={() => setWeekDay(index)}
+                    >
+                      <Text
+                        style={[
+                          styles.weekdayText,
+                          {
+                            color: weekDay === index ? "#fff" : colors.text,
+                          },
+                        ]}
+                      >
+                        {day}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                <TouchableOpacity
+                  style={[
+                    styles.timeButtonFull,
+                    {
+                      backgroundColor: colors.backgrounds.input,
+                      borderColor: colors.border,
+                    },
+                  ]}
+                  onPress={() => setShowTimePicker(true)}
+                >
+                  <Ionicons name="time-outline" size={20} color={colors.text} />
+                  <Text style={[styles.dateText, { color: colors.text }]}>
+                    {dueTime
+                      ? dueTime.toLocaleTimeString("en-US", {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })
+                      : "Select Time"}
+                  </Text>
+                </TouchableOpacity>
+              </>
+            )}
+
+            {/* Monthly Category: Day of Month Selector + Time */}
+            {category === "monthly" && (
+              <>
+                <View style={styles.dayGrid}>
+                  {Array.from({ length: 31 }, (_, i) => i + 1).map((day) => (
+                    <TouchableOpacity
+                      key={day}
+                      style={[
+                        styles.dayButton,
+                        { borderColor: colors.border },
+                        dayOfMonth === day && {
+                          backgroundColor: colors.primary,
+                        },
+                      ]}
+                      onPress={() => setDayOfMonth(day)}
+                    >
+                      <Text
+                        style={[
+                          styles.dayText,
+                          {
+                            color: dayOfMonth === day ? "#fff" : colors.text,
+                          },
+                        ]}
+                      >
+                        {day}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                <TouchableOpacity
+                  style={[
+                    styles.timeButtonFull,
+                    {
+                      backgroundColor: colors.backgrounds.input,
+                      borderColor: colors.border,
+                    },
+                  ]}
+                  onPress={() => setShowTimePicker(true)}
+                >
+                  <Ionicons name="time-outline" size={20} color={colors.text} />
+                  <Text style={[styles.dateText, { color: colors.text }]}>
+                    {dueTime
+                      ? dueTime.toLocaleTimeString("en-US", {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })
+                      : "Time (optional)"}
+                  </Text>
+                </TouchableOpacity>
+              </>
+            )}
+
+            {showDatePicker && (
+              <DateTimePicker
+                value={dueDate || new Date()}
+                mode="date"
+                onChange={(event, date) => {
+                  setShowDatePicker(false);
+                  if (date) setDueDate(date);
+                }}
+              />
+            )}
+
+            {showTimePicker && (
+              <DateTimePicker
+                value={dueTime || new Date()}
+                mode="time"
+                onChange={(event, time) => {
+                  setShowTimePicker(false);
+                  if (time) setDueTime(time);
+                }}
+              />
+            )}
+          </ScrollView>
+
+          <TouchableOpacity
+            style={[
+              styles.createButton,
+              {
+                backgroundColor: title.trim() && !isLoading ? colors.primary : colors.border,
+                opacity: isLoading ? 0.7 : 1,
+              },
+            ]}
+            onPress={handleAddTodo}
+            disabled={!title.trim() || isLoading}
+          >
+            {isLoading ? (
+              <ActivityIndicator color="#FFFFFF" size="small" />
+            ) : (
+              <Text style={styles.createButtonText}>Create Task</Text>
+            )}
+          </TouchableOpacity>
+        </View>
       </View>
-    </View>
+      </KeyboardAvoidingView>
+
+      {/* Custom Alert */}
+      <CustomAlert
+        visible={alertConfig.visible}
+        title={alertConfig.title}
+        message={alertConfig.message}
+        buttons={alertConfig.buttons}
+        type={alertConfig.type}
+      />
+    </Modal>
   );
 };
+
+const styles = StyleSheet.create({
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "flex-end",
+  },
+  modalContent: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingTop: 20,
+    maxHeight: "90%",
+  },
+  modalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 20,
+    paddingBottom: 16,
+  },
+  modalTitle: {
+    fontSize: 22,
+    fontWeight: "bold",
+  },
+  modalBody: {
+    paddingHorizontal: 20,
+  },
+  input: {
+    borderRadius: 12,
+    padding: 16,
+    fontSize: 16,
+    borderWidth: 1,
+    marginBottom: 16,
+  },
+  textArea: {
+    borderRadius: 12,
+    padding: 16,
+    fontSize: 16,
+    borderWidth: 1,
+    marginBottom: 4,
+    minHeight: 80,
+    textAlignVertical: "top",
+  },
+  charCount: {
+    fontSize: 12,
+    textAlign: "right",
+    marginBottom: 16,
+  },
+  label: {
+    fontSize: 16,
+    fontWeight: "600",
+    marginBottom: 8,
+  },
+  optionsRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginBottom: 20,
+  },
+  optionButton: {
+    flex: 1,
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    alignItems: "center",
+  },
+  optionText: {
+    fontSize: 14,
+    fontWeight: "500",
+  },
+  dateTimeRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginBottom: 20,
+  },
+  dateButton: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    padding: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  dateText: {
+    fontSize: 14,
+  },
+  recurringSection: {
+    marginBottom: 20,
+  },
+  recurringHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  toggleSwitch: {
+    width: 48,
+    height: 28,
+    borderRadius: 14,
+    padding: 2,
+    justifyContent: "center",
+  },
+  toggleThumb: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+  },
+  recurringInfo: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: "rgba(0, 122, 255, 0.1)",
+  },
+  recurringInfoText: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  labelWithClear: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  clearButton: {
+    fontSize: 14,
+    fontWeight: "500",
+  },
+  monthLabel: {
+    fontSize: 14,
+    fontWeight: "600",
+    marginBottom: 8,
+    textAlign: "center",
+  },
+  weekdayGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginBottom: 12,
+  },
+  weekdayButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: "center",
+  },
+  weekdayText: {
+    fontSize: 13,
+    fontWeight: "500",
+  },
+  dayGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginBottom: 12,
+  },
+  dayButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  dayText: {
+    fontSize: 13,
+    fontWeight: "500",
+  },
+  timeButtonFull: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    padding: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+    marginBottom: 20,
+  },
+  createButton: {
+    margin: 20,
+    padding: 16,
+    borderRadius: 12,
+    alignItems: "center",
+  },
+  createButtonText: {
+    color: "#fff",
+    fontSize: 17,
+    fontWeight: "600",
+  },
+});
 
 export default TodoInput;
