@@ -3,6 +3,21 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
 export default defineSchema({
+  feedback: defineTable({
+    userId: v.string(),
+    userEmail: v.string(),
+    userName: v.optional(v.string()),
+    type: v.union(v.literal("feature"), v.literal("bug")),
+    title: v.string(),
+    description: v.string(),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("reviewed"),
+      v.literal("resolved"),
+    ),
+    createdAt: v.number(),
+  }).index("by_user", ["userId"]),
+
   users: defineTable({
     clerkId: v.string(),
     email: v.string(),
