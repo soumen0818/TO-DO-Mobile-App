@@ -1,6 +1,27 @@
 import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 
+// Input validation constants
+const MAX_TITLE_LENGTH = 200;
+const MAX_DESCRIPTION_LENGTH = 1000;
+const MIN_TITLE_LENGTH = 1;
+
+// Helper function to validate todo input
+function validateTodoInput(title?: string, description?: string) {
+  if (title !== undefined) {
+    const trimmedTitle = title.trim();
+    if (trimmedTitle.length < MIN_TITLE_LENGTH) {
+      throw new ConvexError("Title cannot be empty");
+    }
+    if (trimmedTitle.length > MAX_TITLE_LENGTH) {
+      throw new ConvexError(`Title must be less than ${MAX_TITLE_LENGTH} characters`);
+    }
+  }
+  if (description !== undefined && description.length > MAX_DESCRIPTION_LENGTH) {
+    throw new ConvexError(`Description must be less than ${MAX_DESCRIPTION_LENGTH} characters`);
+  }
+}
+
 // Get all todos for a specific user
 export const getTodos = query({
   args: { userId: v.string() },
@@ -90,6 +111,9 @@ export const addTodo = mutation({
     recurringPattern: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    // Validate input lengths
+    validateTodoInput(args.title, args.description);
+    
     const now = Date.now();
     const todoId = await ctx.db.insert("todos", {
       userId: args.userId,
@@ -161,8 +185,17 @@ export const updateTodo = mutation({
     ),
     isRecurring: v.optional(v.boolean()),
     recurringPattern: v.optional(v.string()),
+    // Explicit flags to clear optional fields
+    clearCategory: v.optional(v.boolean()),
+    clearDueDate: v.optional(v.boolean()),
+    clearDueTime: v.optional(v.boolean()),
+    clearDescription: v.optional(v.boolean()),
+    clearRecurringPattern: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
+    // Validate input lengths
+    validateTodoInput(args.title, args.description);
+    
     const todo = await ctx.db.get(args.id);
     if (!todo) throw new ConvexError("Todo not found");
     if (todo.userId !== args.userId) throw new ConvexError("Unauthorized");
@@ -172,14 +205,39 @@ export const updateTodo = mutation({
     };
 
     if (args.title !== undefined) updates.title = args.title;
-    if (args.description !== undefined) updates.description = args.description;
-    if (args.dueDate !== undefined) updates.dueDate = args.dueDate;
-    if (args.dueTime !== undefined) updates.dueTime = args.dueTime;
     if (args.priority !== undefined) updates.priority = args.priority;
-    if (args.category !== undefined) updates.category = args.category;
     if (args.isRecurring !== undefined) updates.isRecurring = args.isRecurring;
-    if (args.recurringPattern !== undefined)
+    
+    // Handle fields that can be explicitly cleared
+    if (args.clearDescription) {
+      updates.description = undefined;
+    } else if (args.description !== undefined) {
+      updates.description = args.description;
+    }
+    
+    if (args.clearDueDate) {
+      updates.dueDate = undefined;
+    } else if (args.dueDate !== undefined) {
+      updates.dueDate = args.dueDate;
+    }
+    
+    if (args.clearDueTime) {
+      updates.dueTime = undefined;
+    } else if (args.dueTime !== undefined) {
+      updates.dueTime = args.dueTime;
+    }
+    
+    if (args.clearCategory) {
+      updates.category = undefined;
+    } else if (args.category !== undefined) {
+      updates.category = args.category;
+    }
+    
+    if (args.clearRecurringPattern) {
+      updates.recurringPattern = undefined;
+    } else if (args.recurringPattern !== undefined) {
       updates.recurringPattern = args.recurringPattern;
+    }
 
     // If a completed todo is being changed to recurring, reset it immediately
     // so the user can start fresh with the recurring cycle
