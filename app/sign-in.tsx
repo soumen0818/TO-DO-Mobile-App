@@ -1,3 +1,4 @@
+import Toast from "@/components/Toast";
 import { api } from "@/convex/_generated/api";
 import { useOAuth, useSignIn, useSignUp, useUser } from "@clerk/clerk-expo";
 import { Ionicons } from "@expo/vector-icons";
@@ -61,6 +62,27 @@ export default function SignInScreen() {
   const [pendingVerification, setPendingVerification] = useState(false);
   const [verificationCode, setVerificationCode] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  
+  // Forgot password states
+  const [forgotPassword, setForgotPassword] = useState(false);
+  const [resetCode, setResetCode] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [pendingReset, setPendingReset] = useState(false);
+
+  // Toast state
+  const [toastConfig, setToastConfig] = useState({
+    visible: false,
+    message: "",
+    type: "success" as "success" | "error" | "info" | "warning",
+  });
+
+  const showToast = (message: string, type: "success" | "error" | "info" | "warning" = "info") => {
+    setToastConfig({ visible: true, message, type });
+  };
+
+  const hideToast = () => {
+    setToastConfig((prev) => ({ ...prev, visible: false }));
+  };
 
   const colors = {
     background: isDark ? "#000000" : "#FFFFFF",
@@ -78,13 +100,19 @@ export default function SignInScreen() {
     try {
       const { createdSessionId, setActive } = await startOAuthFlow();
 
-      if (createdSessionId) {
-        setActive!({ session: createdSessionId });
+      // Dismiss the browser immediately to avoid 404 flash
+      WebBrowser.dismissBrowser();
+
+      if (createdSessionId && setActive) {
+        await setActive({ session: createdSessionId });
         router.replace("/(tabs)");
       }
-    } catch (err) {
-      console.error("OAuth error", err);
-      Alert.alert("Error", "Failed to sign in with Google. Please try again.");
+    } catch (err: any) {
+      console.error("OAuth error", JSON.stringify(err, null, 2));
+      if (err?.message?.includes("cancelled") || err?.message?.includes("canceled")) {
+        return;
+      }
+      showToast("Failed to sign in with Google. Please try again.", "error");
     }
   }, [startOAuthFlow, router]);
 
@@ -195,6 +223,96 @@ export default function SignInScreen() {
     }
   };
 
+  // Forgot password - send reset code
+  const onForgotPassword = async () => {
+    if (!email) {
+      showToast("Please enter your email address", "warning");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      // Step 1: Create sign-in with identifier first
+      const signInAttempt = await signIn!.create({
+        identifier: email,
+      });
+
+      // Step 2: Check if reset_password_email_code is available
+      const resetFactor = signInAttempt.supportedFirstFactors?.find(
+        (factor: any) => factor.strategy === "reset_password_email_code"
+      );
+
+      // Check if user signed up with Google (no password)
+      const hasGoogleFactor = signInAttempt.supportedFirstFactors?.find(
+        (factor: any) => factor.strategy === "oauth_google"
+      );
+
+      if (!resetFactor) {
+        if (hasGoogleFactor) {
+          showToast("This account uses Google Sign-In. Please sign in with Google instead.", "info");
+        } else {
+          showToast("Password reset is not available for this account", "error");
+        }
+        setForgotPassword(false);
+        return;
+      }
+
+      // Step 3: Prepare the password reset
+      await signIn!.prepareFirstFactor({
+        strategy: "reset_password_email_code",
+        emailAddressId: (resetFactor as any).emailAddressId,
+      });
+
+      setPendingReset(true);
+      showToast("Reset code sent! Check your email.", "success");
+    } catch (err: any) {
+      console.error("Forgot password error", err);
+      const errorMessage = err.errors?.[0]?.message || err.errors?.[0]?.longMessage || "Failed to send reset code. Make sure the email exists.";
+      showToast(errorMessage, "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Reset password with code
+  const onResetPassword = async () => {
+    if (!resetCode || !newPassword) {
+      showToast("Please enter the code and new password", "warning");
+      return;
+    }
+
+    if (newPassword.length < 8) {
+      showToast("Password must be at least 8 characters", "warning");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const result = await signIn!.attemptFirstFactor({
+        strategy: "reset_password_email_code",
+        code: resetCode,
+        password: newPassword,
+      });
+
+      if (result.status === "complete") {
+        await setSignInActive!({ session: result.createdSessionId });
+        showToast("Password reset successfully!", "success");
+        // Small delay to show toast before navigating
+        setTimeout(() => {
+          router.replace("/(tabs)");
+        }, 1000);
+      } else if (result.status === "needs_second_factor") {
+        showToast("2FA required. Please contact support.", "error");
+      }
+    } catch (err: any) {
+      console.error("Reset password error", err);
+      const errorMessage = err.errors?.[0]?.message || err.errors?.[0]?.longMessage || "Invalid code or password. Please try again.";
+      showToast(errorMessage, "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const onVerifyCode = async () => {
     if (!verificationCode) {
       Alert.alert("Error", "Please enter the verification code");
@@ -233,18 +351,26 @@ export default function SignInScreen() {
   };
 
   return (
-    <SafeAreaView
-      style={[styles.container, { backgroundColor: colors.background }]}
-    >
-      <StatusBar barStyle={isDark ? "light-content" : "dark-content"} />
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        style={styles.keyboardView}
+    <>
+      <Toast
+        visible={toastConfig.visible}
+        message={toastConfig.message}
+        type={toastConfig.type}
+        onHide={hideToast}
+        duration={3500}
+      />
+      <SafeAreaView
+        style={[styles.container, { backgroundColor: colors.background }]}
       >
-        <ScrollView
-          contentContainerStyle={styles.scrollContent}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
+        <StatusBar barStyle={isDark ? "light-content" : "dark-content"} />
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          style={styles.keyboardView}
+        >
+          <ScrollView
+            contentContainerStyle={styles.scrollContent}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
         >
           {/* Top: App Icon and Name */}
           <View style={styles.header}>
@@ -334,6 +460,142 @@ export default function SignInScreen() {
                   </TouchableOpacity>
                 </View>
               </>
+            ) : forgotPassword ? (
+              <>
+                <Text style={[styles.welcomeText, { color: colors.text }]}>
+                  {pendingReset ? "Reset Password" : "Forgot Password"}
+                </Text>
+                <Text
+                  style={[
+                    styles.verificationSubtext,
+                    { color: colors.textSecondary },
+                  ]}
+                >
+                  {pendingReset
+                    ? "Enter the code sent to your email and your new password"
+                    : "Enter your email to receive a reset code"}
+                </Text>
+
+                <View style={styles.inputGroup}>
+                  {!pendingReset ? (
+                    <>
+                      <TextInput
+                        style={[
+                          styles.input,
+                          {
+                            backgroundColor: colors.inputBackground,
+                            color: colors.text,
+                            borderColor: colors.border,
+                          },
+                        ]}
+                        placeholder="Email"
+                        value={email}
+                        onChangeText={setEmail}
+                        autoCapitalize="none"
+                        keyboardType="email-address"
+                        placeholderTextColor={colors.textSecondary}
+                      />
+
+                      <TouchableOpacity
+                        onPress={onForgotPassword}
+                        activeOpacity={0.7}
+                        disabled={loading}
+                        style={[
+                          styles.primaryButton,
+                          { backgroundColor: colors.buttonBackground },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.primaryButtonText,
+                            { color: colors.buttonText },
+                          ]}
+                        >
+                          {loading ? "Sending..." : "Send Reset Code"}
+                        </Text>
+                      </TouchableOpacity>
+                    </>
+                  ) : (
+                    <>
+                      <TextInput
+                        style={[
+                          styles.input,
+                          {
+                            backgroundColor: colors.inputBackground,
+                            color: colors.text,
+                            borderColor: colors.border,
+                          },
+                        ]}
+                        placeholder="Enter 6-digit code"
+                        value={resetCode}
+                        onChangeText={setResetCode}
+                        keyboardType="number-pad"
+                        maxLength={6}
+                        placeholderTextColor={colors.textSecondary}
+                      />
+
+                      <TextInput
+                        style={[
+                          styles.input,
+                          {
+                            backgroundColor: colors.inputBackground,
+                            color: colors.text,
+                            borderColor: colors.border,
+                          },
+                        ]}
+                        placeholder="New Password (min 8 characters)"
+                        value={newPassword}
+                        onChangeText={setNewPassword}
+                        secureTextEntry
+                        placeholderTextColor={colors.textSecondary}
+                      />
+
+                      <TouchableOpacity
+                        onPress={onResetPassword}
+                        activeOpacity={0.7}
+                        disabled={loading}
+                        style={[
+                          styles.primaryButton,
+                          { backgroundColor: colors.buttonBackground },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.primaryButtonText,
+                            { color: colors.buttonText },
+                          ]}
+                        >
+                          {loading ? "Resetting..." : "Reset Password"}
+                        </Text>
+                      </TouchableOpacity>
+                    </>
+                  )}
+
+                  <TouchableOpacity
+                    onPress={() => {
+                      setForgotPassword(false);
+                      setPendingReset(false);
+                      setResetCode("");
+                      setNewPassword("");
+                    }}
+                    style={styles.switchContainer}
+                  >
+                    <Text
+                      style={[styles.switchText, { color: colors.textSecondary }]}
+                    >
+                      Remember your password?{" "}
+                      <Text
+                        style={[
+                          styles.switchTextBold,
+                          { color: colors.buttonBackground },
+                        ]}
+                      >
+                        Sign In
+                      </Text>
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </>
             ) : (
               <>
                 <Text style={[styles.welcomeText, { color: colors.text }]}>
@@ -403,6 +665,23 @@ export default function SignInScreen() {
                       />
                     </TouchableOpacity>
                   </View>
+
+                  {/* Forgot Password Link - only show on sign in */}
+                  {!isSignUp && (
+                    <TouchableOpacity
+                      onPress={() => setForgotPassword(true)}
+                      style={styles.forgotPasswordContainer}
+                    >
+                      <Text
+                        style={[
+                          styles.forgotPasswordText,
+                          { color: colors.buttonBackground },
+                        ]}
+                      >
+                        Forgot Password?
+                      </Text>
+                    </TouchableOpacity>
+                  )}
 
                   <TouchableOpacity
                     onPress={onEmailAuth}
@@ -500,6 +779,7 @@ export default function SignInScreen() {
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
+    </>
   );
 }
 
@@ -622,5 +902,15 @@ const styles = StyleSheet.create({
   },
   switchTextBold: {
     fontWeight: "700",
+  },
+  forgotPasswordContainer: {
+    alignSelf: "flex-end",
+    marginTop: 4,
+    marginBottom: 8,
+    paddingVertical: 4,
+  },
+  forgotPasswordText: {
+    fontSize: 14,
+    fontWeight: "600",
   },
 });
