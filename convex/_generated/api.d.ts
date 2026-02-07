@@ -10,6 +10,7 @@
 
 import type * as autoDelete from "../autoDelete.js";
 import type * as crons from "../crons.js";
+import type * as feedback from "../feedback.js";
 import type * as todos from "../todos.js";
 import type * as users from "../users.js";
 
@@ -22,6 +23,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   autoDelete: typeof autoDelete;
   crons: typeof crons;
+  feedback: typeof feedback;
   todos: typeof todos;
   users: typeof users;
 }>;
