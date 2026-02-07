@@ -234,6 +234,23 @@ export const createHomeStyles = (colors: ColorScheme) => {
       fontWeight: "700",
       color: "#fff",
     },
+    expiringBadgeContainer: {
+      marginBottom: 6,
+    },
+    expiringBadge: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 5,
+      alignSelf: "flex-start",
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 6,
+    },
+    expiringText: {
+      fontSize: 12,
+      fontWeight: "700",
+      color: "#fff",
+    },
     todoDescription: {
       fontSize: 14,
       lineHeight: 19,
