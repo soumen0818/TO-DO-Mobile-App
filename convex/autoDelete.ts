@@ -18,8 +18,8 @@ function shouldDeleteTodo(
   const now = Date.now();
   let expirationTime: number;
 
-  // Handle undefined category (Others) - delete after 24 hours from dueDate+dueTime or createdAt
-  if (category === undefined) {
+  // Handle undefined/null category (Others) - delete after 24 hours from dueDate+dueTime or createdAt
+  if (!category) {
     if (dueDate && dueTime) {
       // If date and time are set, delete 24 hours after that time
       const dueDateObj = new Date(dueDate);
@@ -39,8 +39,8 @@ function shouldDeleteTodo(
   }
 
   const createdDate = new Date(createdAt);
-  // Set time to end of day for fair comparison
-  createdDate.setHours(23, 59, 59, 999);
+  // Set time to end of day in UTC for consistent comparison across server/client
+  createdDate.setUTCHours(23, 59, 59, 999);
 
   switch (category) {
     case "daily":
@@ -95,11 +95,21 @@ export const getTodosExpiringSoon = query({
 
     const now = Date.now();
     const expiringTodos = todos.filter((todo) => {
-      let expirationTime: number;
-      let notificationTime: number;
+      // Never show expiring warning for completed todos - they're done!
+      if (todo.isCompleted) {
+        return false;
+      }
+      
+      // Never show expiring warning for recurring todos - they don't get deleted
+      if (todo.isRecurring === true) {
+        return false;
+      }
 
-      // Handle undefined category
-      if (todo.category === undefined) {
+      let expirationTime: number = 0;
+      let notificationTime: number = 0;
+
+      // Handle undefined/null category (Others) - use falsy check for consistency
+      if (!todo.category) {
         if (todo.dueDate && todo.dueTime) {
           const dueDateObj = new Date(todo.dueDate);
           const [time, period] = todo.dueTime.split(" ");
@@ -116,7 +126,7 @@ export const getTodosExpiringSoon = query({
         notificationTime = expirationTime - 12 * 60 * 60 * 1000; // 12 hours before
       } else {
         const createdDate = new Date(todo.createdAt);
-        createdDate.setHours(23, 59, 59, 999);
+        createdDate.setUTCHours(23, 59, 59, 999);
 
         switch (todo.category) {
           case "daily":
@@ -131,19 +141,61 @@ export const getTodosExpiringSoon = query({
             expirationTime = createdDate.getTime() + 31 * 24 * 60 * 60 * 1000;
             notificationTime = expirationTime - 24 * 60 * 60 * 1000;
             break;
+          default:
+            // Fallback for any unexpected category value
+            expirationTime = createdDate.getTime() + 2 * 24 * 60 * 60 * 1000;
+            notificationTime = expirationTime - 24 * 60 * 60 * 1000;
+            break;
         }
       }
 
-      // Return todos that are in the notification window
-      return now >= notificationTime && now < expirationTime;
+      // Return todos that are in the notification window (within 24 hours of deletion)
+      const isInNotificationWindow = now >= notificationTime && now < expirationTime;
+      return isInNotificationWindow;
     });
 
-    return expiringTodos.map((todo) => ({
-      ...todo,
-      hoursUntilDeletion: Math.ceil(
-        (Date.now() - todo.createdAt) / (1000 * 60 * 60),
-      ),
-    }));
+    return expiringTodos.map((todo) => {
+      // Recalculate expirationTime for each todo to get accurate hours
+      let expirationTime: number = 0;
+      
+      if (!todo.category) {
+        if (todo.dueDate && todo.dueTime) {
+          const dueDateObj = new Date(todo.dueDate);
+          const [time, period] = todo.dueTime.split(" ");
+          let [hours, minutes] = time.split(":").map(Number);
+          if (period === "PM" && hours !== 12) hours += 12;
+          if (period === "AM" && hours === 12) hours = 0;
+          dueDateObj.setHours(hours, minutes, 0, 0);
+          expirationTime = dueDateObj.getTime() + 24 * 60 * 60 * 1000;
+        } else {
+          expirationTime = todo.createdAt + 24 * 60 * 60 * 1000;
+        }
+      } else {
+        const createdDate = new Date(todo.createdAt);
+        createdDate.setUTCHours(23, 59, 59, 999);
+        switch (todo.category) {
+          case "daily":
+            expirationTime = createdDate.getTime() + 2 * 24 * 60 * 60 * 1000;
+            break;
+          case "weekly":
+            expirationTime = createdDate.getTime() + 8 * 24 * 60 * 60 * 1000;
+            break;
+          case "monthly":
+            expirationTime = createdDate.getTime() + 31 * 24 * 60 * 60 * 1000;
+            break;
+          default:
+            expirationTime = createdDate.getTime() + 2 * 24 * 60 * 60 * 1000;
+            break;
+        }
+      }
+      
+      const hoursUntilDeletion = Math.max(0, Math.ceil((expirationTime - now) / (1000 * 60 * 60)));
+      
+      return {
+        ...todo,
+        hoursUntilDeletion,
+      };
+    });
   },
 });
 
