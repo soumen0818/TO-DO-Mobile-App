@@ -240,6 +240,13 @@ const EditTodoModal = ({ visible, onClose, todo, onSuccess }: EditTodoModalProps
             : undefined;
         }
 
+        // Determine which fields should be explicitly cleared
+        const clearCategory = category === undefined && todo.category !== undefined;
+        const clearDueDate = finalDueDate === undefined && todo.dueDate !== undefined;
+        const clearDueTime = finalDueTime === undefined && todo.dueTime !== undefined;
+        const clearDescription = !description.trim() && !!todo.description;
+        const clearRecurringPattern = !isRecurring && !!todo.recurringPattern;
+
         await updateTodo({
           id: todo._id,
           userId: user.id,
@@ -251,6 +258,12 @@ const EditTodoModal = ({ visible, onClose, todo, onSuccess }: EditTodoModalProps
           dueTime: finalDueTime,
           isRecurring: isRecurring,
           recurringPattern: isRecurring ? recurringPattern : undefined,
+          // Pass clear flags
+          clearCategory,
+          clearDueDate,
+          clearDueTime,
+          clearDescription,
+          clearRecurringPattern,
         });
 
         // Reschedule notifications for the updated todo
@@ -385,7 +398,12 @@ const EditTodoModal = ({ visible, onClose, todo, onSuccess }: EditTodoModalProps
             <View style={styles.labelWithClear}>
               <Text style={[styles.label, { color: colors.text }]}>Category</Text>
               {category && (
-                <TouchableOpacity onPress={() => setCategory(undefined)}>
+                <TouchableOpacity onPress={() => {
+                  setCategory(undefined);
+                  // Clear recurring when category is cleared (recurring is tied to category)
+                  setIsRecurring(false);
+                  setRecurringPattern("daily");
+                }}>
                   <Text style={[styles.clearButton, { color: colors.primary }]}>
                     Clear
                   </Text>
