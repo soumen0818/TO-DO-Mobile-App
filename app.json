@@ -4,7 +4,7 @@
     "slug": "zenith-task",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/todo-app-logo.png",
+    "icon": "./assets/images/app-logo-padded.png",
     "scheme": "todoapp",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -13,8 +13,8 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/todo-app-logo.png"
+        "backgroundColor": "#FFFFFF",
+        "foregroundImage": "./assets/images/app-logo-padded.png"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
