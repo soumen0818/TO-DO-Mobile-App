@@ -108,6 +108,18 @@ export default function Index() {
       : "skip",
   );
 
+  // Query for todos expiring soon (within 24 hours)
+  const expiringTodos = useQuery(
+    api.autoDelete.getTodosExpiringSoon,
+    user ? { userId: user.id } : "skip",
+  );
+
+  // Memoized set of expiring todo IDs for quick lookup
+  const expiringTodoIds = useMemo(() => {
+    if (!expiringTodos) return new Set<string>();
+    return new Set(expiringTodos.map((todo) => todo._id));
+  }, [expiringTodos]);
+
   // Use per-category cache for instant switching, then update with fresh data
   // Priority: optimistic > raw data > category cache
   const displayTodos = useMemo(() => {
@@ -386,6 +398,8 @@ export default function Index() {
   };
 
   const renderTodoItem = ({ item }: { item: Todo }) => {
+    const isExpiringSoon = expiringTodoIds.has(item._id);
+
     return (
       <View style={homeStyles.todoItemWrapper}>
         <LinearGradient
@@ -445,6 +459,19 @@ export default function Index() {
                   >
                     <Ionicons name="checkmark-circle" size={16} color="#fff" />
                     <Text style={homeStyles.completedText}>Completed</Text>
+                  </LinearGradient>
+                </View>
+              )}
+
+              {/* Expiring Soon Badge */}
+              {isExpiringSoon && !item.isCompleted && (
+                <View style={homeStyles.expiringBadgeContainer}>
+                  <LinearGradient
+                    colors={colors.gradients.warning}
+                    style={homeStyles.expiringBadge}
+                  >
+                    <Ionicons name="time" size={14} color="#fff" />
+                    <Text style={homeStyles.expiringText}>Expiring Soon</Text>
                   </LinearGradient>
                 </View>
               )}
@@ -692,6 +719,8 @@ export default function Index() {
           visible={showDetailModal}
           onClose={() => setShowDetailModal(false)}
           todo={detailTodo}
+          isExpiringSoon={detailTodo ? expiringTodoIds.has(detailTodo._id) : false}
+          hoursUntilDeletion={detailTodo ? expiringTodos?.find(t => t._id === detailTodo._id)?.hoursUntilDeletion : undefined}
         />
 
         {/* Custom Alert */}

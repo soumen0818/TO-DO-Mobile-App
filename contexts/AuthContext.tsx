@@ -23,7 +23,11 @@ const tokenCache = {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const publishableKey = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY!;
 
+  console.log("[AuthProvider] Clerk key exists:", !!publishableKey);
+  console.log("[AuthProvider] Clerk key prefix:", publishableKey?.substring(0, 10));
+
   if (!publishableKey) {
+    console.error("[AuthProvider] ERROR: Missing Clerk publishable key!");
     throw new Error(
       "Missing Publishable Key. Please set EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY in your .env",
     );
