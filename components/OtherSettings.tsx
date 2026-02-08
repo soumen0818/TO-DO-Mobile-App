@@ -1,5 +1,6 @@
 import { createSettingsStyles } from "@/assets/styles/settings.styles";
 import CustomAlert from "@/components/CustomAlert";
+import FeedbackModal from "@/components/FeedbackModal";
 import { api } from "@/convex/_generated/api";
 import useTheme from "@/hooks/useTheme";
 import { useUser } from "@clerk/clerk-expo";
@@ -7,7 +8,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useMutation } from "convex/react";
 import { LinearGradient } from "expo-linear-gradient";
 import { useState } from "react";
-import { Linking, Text, TouchableOpacity, View } from "react-native";
+import { Text, TouchableOpacity, View } from "react-native";
 
 const OtherSettings = () => {
   const { colors } = useTheme();
@@ -21,16 +22,12 @@ const OtherSettings = () => {
     buttons: [] as any[],
     type: "info" as "info" | "warning" | "error" | "success",
   });
+  const [feedbackModalVisible, setFeedbackModalVisible] = useState(false);
 
   const clearAllTodos = useMutation(api.todos.clearAllTodos);
 
   const handleFeedback = () => {
-    const email = "soumen0818@gmail.com";
-    const subject = encodeURIComponent("Zenith Task - Feedback");
-    const body = encodeURIComponent(
-      "Hi,\n\nI would like to share my feedback about Zenith Task:\n\n",
-    );
-    Linking.openURL(`mailto:${email}?subject=${subject}&body=${body}`);
+    setFeedbackModalVisible(true);
   };
 
   const handleTerms = () => {
@@ -246,6 +243,11 @@ const OtherSettings = () => {
         message={alertConfig.message}
         buttons={alertConfig.buttons}
         type={alertConfig.type}
+      />
+
+      <FeedbackModal
+        visible={feedbackModalVisible}
+        onClose={() => setFeedbackModalVisible(false)}
       />
     </>
   );
