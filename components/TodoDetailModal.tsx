@@ -18,14 +18,144 @@ interface TodoDetailModalProps {
   visible: boolean;
   onClose: () => void;
   todo: Todo | null;
+  isExpiringSoon?: boolean;
+  hoursUntilDeletion?: number;
 }
+
+// Calculate expiration info for a todo - matches logic in convex/autoDelete.ts
+const getExpirationInfo = (todo: Todo): { isExpiringSoon: boolean; hoursUntilDeletion: number; expirationDate: Date } | null => {
+  // Recurring todos never expire
+  if (todo.isRecurring === true) {
+    return null;
+  }
+
+  const now = Date.now();
+  let expirationTime: number = 0;
+  let notificationTime: number = 0;
+
+  // Handle undefined/null category (Others) - check for falsy to match both null and undefined
+  if (!todo.category) {
+    if (todo.dueDate && todo.dueTime) {
+      // If date and time are set, delete 24 hours after that time
+      const dueDateObj = new Date(todo.dueDate);
+      const [time, period] = todo.dueTime.split(" ");
+      const timeParts = time.split(":").map(Number);
+      let hours = timeParts[0];
+      const minutes = timeParts[1];
+
+      if (period === "PM" && hours !== 12) hours += 12;
+      if (period === "AM" && hours === 12) hours = 0;
+
+      dueDateObj.setHours(hours, minutes, 0, 0);
+      expirationTime = dueDateObj.getTime() + 24 * 60 * 60 * 1000;
+    } else {
+      // If no date/time set, delete 24 hours after creation
+      expirationTime = todo.createdAt + 24 * 60 * 60 * 1000;
+    }
+    // For "Others" category: notification 12 hours before expiration
+    notificationTime = expirationTime - 12 * 60 * 60 * 1000;
+  } else {
+    // For daily/weekly/monthly: use createdAt with end of day in UTC
+    const createdDate = new Date(todo.createdAt);
+    createdDate.setUTCHours(23, 59, 59, 999);
+
+    switch (todo.category) {
+      case "daily":
+        // Delete after 1 day + 24 hour grace period = 2 days total
+        expirationTime = createdDate.getTime() + 2 * 24 * 60 * 60 * 1000;
+        notificationTime = expirationTime - 24 * 60 * 60 * 1000;
+        break;
+      case "weekly":
+        // Delete after 7 days + 24 hour grace period = 8 days total
+        expirationTime = createdDate.getTime() + 8 * 24 * 60 * 60 * 1000;
+        notificationTime = expirationTime - 24 * 60 * 60 * 1000;
+        break;
+      case "monthly":
+        // Delete after 30 days + 24 hour grace period = 31 days total
+        expirationTime = createdDate.getTime() + 31 * 24 * 60 * 60 * 1000;
+        notificationTime = expirationTime - 24 * 60 * 60 * 1000;
+        break;
+      default:
+        // Fallback for any unexpected category value
+        expirationTime = createdDate.getTime() + 2 * 24 * 60 * 60 * 1000;
+        notificationTime = expirationTime - 24 * 60 * 60 * 1000;
+        break;
+    }
+  }
+
+  // Only show if in notification window (now >= notificationTime && now < expirationTime)
+  const isInNotificationWindow = now >= notificationTime && now < expirationTime;
+  
+  if (!isInNotificationWindow) {
+    return null;
+  }
+
+  const hoursUntilDeletion = Math.max(0, Math.ceil((expirationTime - now) / (1000 * 60 * 60)));
+
+  return {
+    isExpiringSoon: true,
+    hoursUntilDeletion,
+    expirationDate: new Date(expirationTime),
+  };
+};
 
 const TodoDetailModal: React.FC<TodoDetailModalProps> = ({
   visible,
   onClose,
   todo,
+  isExpiringSoon: isExpiringSoonProp,
+  hoursUntilDeletion: hoursUntilDeletionProp,
 }) => {
   const { colors } = useTheme();
+
+  // Use props if provided, otherwise calculate locally
+  const localExpirationInfo = todo ? getExpirationInfo(todo) : null;
+  
+  // Calculate proper expiration date when local info is not available
+  const calculateExpirationDate = (t: Todo): Date => {
+    let expirationTime: number;
+    if (!t.category) {
+      if (t.dueDate && t.dueTime) {
+        const dueDateObj = new Date(t.dueDate);
+        const [time, period] = t.dueTime.split(" ");
+        const timeParts = time.split(":").map(Number);
+        let hours = timeParts[0];
+        const minutes = timeParts[1];
+        if (period === "PM" && hours !== 12) hours += 12;
+        if (period === "AM" && hours === 12) hours = 0;
+        dueDateObj.setHours(hours, minutes, 0, 0);
+        expirationTime = dueDateObj.getTime() + 24 * 60 * 60 * 1000;
+      } else {
+        expirationTime = t.createdAt + 24 * 60 * 60 * 1000;
+      }
+    } else {
+      const createdDate = new Date(t.createdAt);
+      createdDate.setUTCHours(23, 59, 59, 999);
+      switch (t.category) {
+        case "daily":
+          expirationTime = createdDate.getTime() + 2 * 24 * 60 * 60 * 1000;
+          break;
+        case "weekly":
+          expirationTime = createdDate.getTime() + 8 * 24 * 60 * 60 * 1000;
+          break;
+        case "monthly":
+          expirationTime = createdDate.getTime() + 31 * 24 * 60 * 60 * 1000;
+          break;
+        default:
+          expirationTime = createdDate.getTime() + 2 * 24 * 60 * 60 * 1000;
+      }
+    }
+    return new Date(expirationTime);
+  };
+  
+  // Determine expiration info - prefer props from parent (server-side) if available
+  const expirationInfo = isExpiringSoonProp !== undefined
+    ? (isExpiringSoonProp ? {
+        isExpiringSoon: true,
+        hoursUntilDeletion: hoursUntilDeletionProp ?? localExpirationInfo?.hoursUntilDeletion ?? 0,
+        expirationDate: localExpirationInfo?.expirationDate ?? (todo ? calculateExpirationDate(todo) : new Date()),
+      } : null)
+    : localExpirationInfo;
 
   if (!todo) return null;
 
@@ -309,6 +439,36 @@ const TodoDetailModal: React.FC<TodoDetailModalProps> = ({
               </View>
             )}
 
+            {/* Expiration Warning (if expiring soon) */}
+            {expirationInfo && (
+              <View style={styles.expirationSection}>
+                <LinearGradient
+                  colors={colors.gradients.warning}
+                  style={styles.expirationBadge}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                >
+                  <Ionicons name="alert-circle" size={20} color="#fff" />
+                  <View style={styles.expirationContent}>
+                    <Text style={styles.expirationTitle}>
+                      ⚠️ Expiring Soon
+                    </Text>
+                    <Text style={styles.expirationText}>
+                      This todo will be auto-deleted in {expirationInfo.hoursUntilDeletion} hour
+                      {expirationInfo.hoursUntilDeletion !== 1 ? "s" : ""}
+                    </Text>
+                    <Text style={styles.expirationSubtext}>
+                      {expirationInfo.expirationDate.toLocaleDateString()} at{" "}
+                      {expirationInfo.expirationDate.toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </Text>
+                  </View>
+                </LinearGradient>
+              </View>
+            )}
+
             {/* Timestamps Footer */}
             <View
               style={[
@@ -499,6 +659,35 @@ const styles = StyleSheet.create({
   recurringText: {
     fontSize: 14,
     fontWeight: "600",
+  },
+  expirationSection: {
+    marginBottom: 16,
+  },
+  expirationBadge: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderRadius: 12,
+  },
+  expirationContent: {
+    flex: 1,
+    gap: 4,
+  },
+  expirationTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#fff",
+  },
+  expirationText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#fff",
+  },
+  expirationSubtext: {
+    fontSize: 12,
+    color: "rgba(255, 255, 255, 0.85)",
   },
   timestampSection: {
     paddingTop: 16,
