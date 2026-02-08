@@ -9,27 +9,64 @@ import { Slot } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { Text, View } from "react-native";
 
 // Prevent splash screen from auto-hiding
 SplashScreen.preventAutoHideAsync();
 
-const convex = new ConvexReactClient(process.env.EXPO_PUBLIC_CONVEX_URL!, {
+// Get environment variables with fallback and logging
+const CONVEX_URL = process.env.EXPO_PUBLIC_CONVEX_URL;
+console.log("[_layout] Convex URL:", CONVEX_URL);
+console.log("[_layout] Clerk Key exists:", !!process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY);
+
+if (!CONVEX_URL) {
+  console.error("[_layout] ERROR: EXPO_PUBLIC_CONVEX_URL is not set!");
+}
+
+const convex = new ConvexReactClient(CONVEX_URL || "https://festive-seahorse-929.convex.cloud", {
   unsavedChangesWarning: false,
 });
 
 export default function RootLayout() {
-  const [fontsLoaded] = useFonts({
+  const [fontsLoaded, fontError] = useFonts({
     SpaceMono: require("../assets/fonts/SpaceMono-Regular.ttf"),
   });
 
   useEffect(() => {
-    if (fontsLoaded) {
+    // Hide splash screen after fonts load OR if there's an error OR after 3 seconds timeout
+    const timeoutId = setTimeout(() => {
+      console.log("Force hiding splash screen after timeout");
+      SplashScreen.hideAsync();
+    }, 3000);
+
+    if (fontsLoaded || fontError) {
+      clearTimeout(timeoutId);
       SplashScreen.hideAsync();
     }
-  }, [fontsLoaded]);
 
-  if (!fontsLoaded) {
+    return () => clearTimeout(timeoutId);
+  }, [fontsLoaded, fontError]);
+
+  if (!fontsLoaded && !fontError) {
     return null;
+  }
+
+  // Show error if environment variables are missing
+  if (!process.env.EXPO_PUBLIC_CONVEX_URL || !process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY) {
+    return (
+      <View style={{ flex: 1, justifyContent: "center", alignItems: "center", padding: 20 }}>
+        <Text style={{ color: "red", fontSize: 18, fontWeight: "bold", marginBottom: 10 }}>Configuration Error</Text>
+        <Text style={{ color: "#333", textAlign: "center" }}>
+          Missing environment variables. Please rebuild the app with proper configuration.
+        </Text>
+        <Text style={{ color: "#666", marginTop: 10, fontSize: 12 }}>
+          Convex URL: {process.env.EXPO_PUBLIC_CONVEX_URL ? "✓" : "✗"}
+        </Text>
+        <Text style={{ color: "#666", fontSize: 12 }}>
+          Clerk Key: {process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY ? "✓" : "✗"}
+        </Text>
+      </View>
+    );
   }
 
   return (
