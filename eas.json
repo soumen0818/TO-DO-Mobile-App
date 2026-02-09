@@ -9,8 +9,8 @@
       "distribution": "internal",
       "channel": "development",
       "env": {
-        "EXPO_PUBLIC_CONVEX_URL": "https://festive-seahorse-929.convex.cloud",
-        "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY": "pk_test_cHJlY2lzZS1lZ3JldC02Ny5jbGVyay5hY2NvdW50cy5kZXYk"
+        "EXPO_PUBLIC_SUPABASE_URL": "https://zrklejtduvacsogfwfys.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_oOoj18ZbOhcr5JTULGub6A_TlxnjC0K"
       }
     },
     "preview": {
@@ -23,8 +23,8 @@
         "simulator": false
       },
       "env": {
-        "EXPO_PUBLIC_CONVEX_URL": "https://festive-seahorse-929.convex.cloud",
-        "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY": "pk_test_cHJlY2lzZS1lZ3JldC02Ny5jbGVyay5hY2NvdW50cy5kZXYk"
+        "EXPO_PUBLIC_SUPABASE_URL": "https://zrklejtduvacsogfwfys.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_oOoj18ZbOhcr5JTULGub6A_TlxnjC0K"
       }
     },
     "staging": {
@@ -34,8 +34,8 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_CONVEX_URL": "https://festive-seahorse-929.convex.cloud",
-        "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY": "pk_test_cHJlY2lzZS1lZ3JldC02Ny5jbGVyay5hY2NvdW50cy5kZXYk"
+        "EXPO_PUBLIC_SUPABASE_URL": "https://zrklejtduvacsogfwfys.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_oOoj18ZbOhcr5JTULGub6A_TlxnjC0K"
       }
     },
     "production": {
@@ -48,8 +48,8 @@
         "simulator": false
       },
       "env": {
-        "EXPO_PUBLIC_CONVEX_URL": "https://fortunate-panther-246.convex.cloud",
-        "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY": "pk_test_cHJlY2lzZS1lZ3JldC02Ny5jbGVyay5hY2NvdW50cy5kZXYk"
+        "EXPO_PUBLIC_SUPABASE_URL": "https://zrklejtduvacsogfwfys.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_oOoj18ZbOhcr5JTULGub6A_TlxnjC0K"
       }
     },
     "production-aab": {
@@ -59,8 +59,8 @@
         "buildType": "app-bundle"
       },
       "env": {
-        "EXPO_PUBLIC_CONVEX_URL": "https://fortunate-panther-246.convex.cloud",
-        "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY": "pk_test_cHJlY2lzZS1lZ3JldC02Ny5jbGVyay5hY2NvdW50cy5kZXYk"
+        "EXPO_PUBLIC_SUPABASE_URL": "https://zrklejtduvacsogfwfys.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_oOoj18ZbOhcr5JTULGub6A_TlxnjC0K"
       }
     }
   },

@@ -5,7 +5,7 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/app-logo-padded.png",
-    "scheme": "todoapp",
+    "scheme": "zenith-task",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
@@ -18,7 +18,25 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.soumen0818.zenithtask"
+      "package": "com.soumen0818.zenithtask",
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "zenith-task"
+            },
+            {
+              "scheme": "com.soumen0818.zenithtask"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        }
+      ]
     },
     "web": {
       "output": "static",
