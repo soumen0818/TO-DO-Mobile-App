@@ -3,6 +3,7 @@
 # dependencies
 node_modules/
 
+# Documentation (if contains sensitive info)
 docs
 
 # Expo
@@ -33,13 +34,33 @@ yarn-error.*
 *.pem
 
 # local env files
+.env
 .env*.local
+.env.development
+.env.production
 
 # typescript
 *.tsbuildinfo
 
+# examples
 app-example
 
 # generated native folders
 /ios
 /android
+
+# Backup files
+*.backup
+*.bak
+*.tmp
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+Thumbs.db
+.DS_Store
