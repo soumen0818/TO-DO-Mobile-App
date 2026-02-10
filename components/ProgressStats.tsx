@@ -1,21 +1,24 @@
 import { createSettingsStyles } from "@/assets/styles/settings.styles";
-import { api } from "@/convex/_generated/api";
+import { getUserStats } from "@/lib/todos";
 import useTheme from "@/hooks/useTheme";
-import { useUser } from "@clerk/clerk-expo";
+import { useAuth } from "@/contexts/AuthContext";
 import { Ionicons } from "@expo/vector-icons";
-import { useQuery } from "convex/react";
 import { LinearGradient } from "expo-linear-gradient";
+import { useEffect, useState } from "react";
 import { Text, View } from "react-native";
 
 const ProgressStats = () => {
   const { colors } = useTheme();
   const settingsStyles = createSettingsStyles(colors);
-  const { user } = useUser();
+  const { user } = useAuth();
+  const [stats, setStats] = useState<any>(null);
 
-  const stats = useQuery(
-    api.todos.getUserStats,
-    user ? { userId: user.id } : "skip",
-  );
+  useEffect(() => {
+    if (user) {
+      getUserStats(user.id).then(setStats).catch(console.error);
+    }
+  }, [user]);
+
   const totalTodos = stats?.total || 0;
   const completedTodos = stats?.completed || 0;
   const activeTodos = stats?.active || 0;

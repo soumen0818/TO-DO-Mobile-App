@@ -1,13 +1,11 @@
 import { createHomeStyles } from "@/assets/styles/home.styles";
-import { api } from "@/convex/_generated/api";
-import { Doc } from "@/convex/_generated/dataModel";
+import { Database } from "@/lib/database.types";
 import useTheme from "@/hooks/useTheme";
-import { useUser } from "@clerk/clerk-expo";
-import { useQuery } from "convex/react";
+import { useAuth } from "@/contexts/AuthContext";
 import { LinearGradient } from "expo-linear-gradient";
 import { Image, Text, View } from "react-native";
 
-type Todo = Doc<"todos">;
+type Todo = Database['public']['Tables']['todos']['Row'];
 
 interface HeaderProps {
   selectedCategory?: "daily" | "weekly" | "monthly" | "others";
@@ -16,25 +14,19 @@ interface HeaderProps {
 
 const Header = ({ selectedCategory, categoryTodos }: HeaderProps) => {
   const { colors } = useTheme();
-  const { user } = useUser();
+  const { user } = useAuth();
 
   const homeStyles = createHomeStyles(colors);
 
-  // Get user from Convex database
-  const convexUser = useQuery(
-    api.users.getUserByClerkId,
-    user ? { clerkId: user.id } : "skip",
-  );
-
   // Use category-specific todos if provided, otherwise show nothing until loaded
   const completedCount = categoryTodos
-    ? categoryTodos.filter((todo) => todo.isCompleted).length
+    ? categoryTodos.filter((todo) => todo.is_completed).length
     : 0;
   const totalCount = categoryTodos ? categoryTodos.length : 0;
   const progressPercentage =
     totalCount > 0 ? (completedCount / totalCount) * 100 : 0;
 
-  const displayName = convexUser?.name || user?.fullName || "User";
+  const displayName = user?.user_metadata?.full_name || user?.user_metadata?.name || "User";
   const categoryLabel = selectedCategory
     ? selectedCategory.charAt(0).toUpperCase() + selectedCategory.slice(1)
     : "All";
