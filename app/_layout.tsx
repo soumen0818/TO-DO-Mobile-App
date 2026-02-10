@@ -3,7 +3,6 @@ import { SettingsProvider } from "@/contexts/SettingsContext";
 import { ThemeProvider } from "@/hooks/useTheme";
 // Import to ensure notification handler is set at app start
 import "@/utils/notificationUtils";
-import { ConvexProvider, ConvexReactClient } from "convex/react";
 import { useFonts } from "expo-font";
 import { Slot } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
@@ -15,17 +14,18 @@ import { Text, View } from "react-native";
 SplashScreen.preventAutoHideAsync();
 
 // Get environment variables with fallback and logging
-const CONVEX_URL = process.env.EXPO_PUBLIC_CONVEX_URL;
-console.log("[_layout] Convex URL:", CONVEX_URL);
-console.log("[_layout] Clerk Key exists:", !!process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY);
+const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
 
-if (!CONVEX_URL) {
-  console.error("[_layout] ERROR: EXPO_PUBLIC_CONVEX_URL is not set!");
+console.log("[_layout] Supabase URL exists:", !!SUPABASE_URL);
+console.log("[_layout] Supabase Anon Key exists:", !!SUPABASE_ANON_KEY);
+
+if (!SUPABASE_URL) {
+  console.error("[_layout] ERROR: EXPO_PUBLIC_SUPABASE_URL is not set!");
 }
-
-const convex = new ConvexReactClient(CONVEX_URL || "https://festive-seahorse-929.convex.cloud", {
-  unsavedChangesWarning: false,
-});
+if (!SUPABASE_ANON_KEY) {
+  console.error("[_layout] ERROR: EXPO_PUBLIC_SUPABASE_ANON_KEY is not set!");
+}
 
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts({
@@ -52,7 +52,7 @@ export default function RootLayout() {
   }
 
   // Show error if environment variables are missing
-  if (!process.env.EXPO_PUBLIC_CONVEX_URL || !process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY) {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
     return (
       <View style={{ flex: 1, justifyContent: "center", alignItems: "center", padding: 20 }}>
         <Text style={{ color: "red", fontSize: 18, fontWeight: "bold", marginBottom: 10 }}>Configuration Error</Text>
@@ -60,10 +60,10 @@ export default function RootLayout() {
           Missing environment variables. Please rebuild the app with proper configuration.
         </Text>
         <Text style={{ color: "#666", marginTop: 10, fontSize: 12 }}>
-          Convex URL: {process.env.EXPO_PUBLIC_CONVEX_URL ? "✓" : "✗"}
+          Supabase URL: {SUPABASE_URL ? "✓" : "✗"}
         </Text>
         <Text style={{ color: "#666", fontSize: 12 }}>
-          Clerk Key: {process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY ? "✓" : "✗"}
+          Supabase Anon Key: {SUPABASE_ANON_KEY ? "✓" : "✗"}
         </Text>
       </View>
     );
@@ -72,13 +72,11 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <AuthProvider>
-        <ConvexProvider client={convex}>
-          <SettingsProvider>
-            <ThemeProvider>
-              <Slot />
-            </ThemeProvider>
-          </SettingsProvider>
-        </ConvexProvider>
+        <SettingsProvider>
+          <ThemeProvider>
+            <Slot />
+          </ThemeProvider>
+        </SettingsProvider>
       </AuthProvider>
     </GestureHandlerRootView>
   );
