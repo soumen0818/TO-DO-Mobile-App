@@ -1,11 +1,10 @@
 import CustomAlert from "@/components/CustomAlert";
-import { api } from "@/convex/_generated/api";
+import { addTodo } from "@/lib/todos";
 import useTheme from "@/hooks/useTheme";
 import { useNotifications } from "@/hooks/useNotifications";
-import { useUser } from "@clerk/clerk-expo";
+import { useAuth } from "@/contexts/AuthContext";
 import { Ionicons } from "@expo/vector-icons";
 import DateTimePicker from "@react-native-community/datetimepicker";
-import { useMutation } from "convex/react";
 import { useEffect, useState } from "react";
 import {
   Modal,
@@ -36,7 +35,7 @@ const TodoInput = ({
   onSuccess,
 }: TodoInputProps) => {
   const { colors } = useTheme();
-  const { user } = useUser();
+  const { user } = useAuth();
   const { scheduleAllTodoNotifications } = useNotifications();
 
   const [title, setTitle] = useState("");
@@ -81,8 +80,6 @@ const TodoInput = ({
       setRecurringPattern(category);
     }
   }, [category, isRecurring]);
-
-  const addTodo = useMutation(api.todos.addTodo);
 
   const resetForm = () => {
     setTitle("");
@@ -169,7 +166,8 @@ const TodoInput = ({
             createdAt,
             finalDueDate,
             finalDueTime,
-            false
+            false,
+            isRecurring  // Pass the recurring status
           );
         }
 
@@ -290,16 +288,16 @@ const TodoInput = ({
         return;
       }
 
-      // Check category limits (only if category is selected)
-      if (category) {
-        const limits = { daily: 10, weekly: 20, monthly: 30 };
-        const currentLimit = limits[category];
+      // Check category limits for all categories
+      const limits = { daily: 30, weekly: 20, monthly: 30, others: 50 };
+      const currentLimit = category ? limits[category] : limits.others;
 
-        if (currentCount >= currentLimit) {
+      if (currentCount >= currentLimit) {
+          const categoryName = category || 'others';
           setAlertConfig({
             visible: true,
             title: "Limit Reached",
-            message: `You have reached the maximum limit of ${currentLimit} todos for the ${category} category. Please delete some existing todos or select a different category to continue.`,
+            message: `You have reached the maximum limit of ${currentLimit} todos for the ${categoryName} category. Please delete some existing todos or select a different category to continue.`,
             buttons: [
               {
                 text: "Got it",
@@ -311,7 +309,6 @@ const TodoInput = ({
           });
           return;
         }
-      }
 
       // Proceed with adding todo
       await proceedWithAddTodo();

@@ -162,9 +162,16 @@ export const useNotifications = () => {
     category: "daily" | "weekly" | "monthly" | undefined,
     createdAt: number,
     dueDate?: number,
-    dueTime?: string
+    dueTime?: string,
+    isRecurring?: boolean
   ): Promise<string | null> => {
     if (!notificationsEnabled) return null;
+    
+    // Don't schedule auto-delete warnings for recurring todos
+    if (isRecurring) {
+      console.log(`[Notifications] Skipping auto-delete warning for recurring todo: ${todoTitle}`);
+      return null;
+    }
 
     let expirationTime: number;
     let warningHoursBefore: number;
@@ -198,7 +205,7 @@ export const useNotifications = () => {
       } else {
         expirationTime = createdAt + 24 * 60 * 60 * 1000;
       }
-      warningHoursBefore = 6; // 6 hours before for others
+      warningHoursBefore = 12; // 12 hours before for others
     } else {
       const createdDate = new Date(createdAt);
       createdDate.setHours(23, 59, 59, 999);
@@ -206,7 +213,7 @@ export const useNotifications = () => {
       switch (category) {
         case "daily":
           expirationTime = createdDate.getTime() + 2 * 24 * 60 * 60 * 1000;
-          warningHoursBefore = 12; // 12 hours before
+          warningHoursBefore = 24; // 24 hours before
           break;
         case "weekly":
           expirationTime = createdDate.getTime() + 8 * 24 * 60 * 60 * 1000;
@@ -214,7 +221,7 @@ export const useNotifications = () => {
           break;
         case "monthly":
           expirationTime = createdDate.getTime() + 31 * 24 * 60 * 60 * 1000;
-          warningHoursBefore = 48; // 48 hours before
+          warningHoursBefore = 24; // 24 hours before
           break;
       }
     }
@@ -327,7 +334,8 @@ export const useNotifications = () => {
     createdAt: number,
     dueDate?: number,
     dueTime?: string,
-    isCompleted?: boolean
+    isCompleted?: boolean,
+    isRecurring?: boolean
   ): Promise<void> => {
     if (!notificationsEnabled || isCompleted) return;
 
@@ -354,8 +362,8 @@ export const useNotifications = () => {
       }
     }
 
-    // Schedule auto-delete warning
-    await scheduleAutoDeleteWarning(todoId, todoTitle, category, createdAt, dueDate, dueTime);
+    // Schedule auto-delete warning (skip for recurring todos)
+    await scheduleAutoDeleteWarning(todoId, todoTitle, category, createdAt, dueDate, dueTime, isRecurring);
 
     // Schedule completion reminder for daily tasks
     await scheduleCompletionReminder(todoId, todoTitle, category);
