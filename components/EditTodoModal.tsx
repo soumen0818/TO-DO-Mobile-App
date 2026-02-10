@@ -1,12 +1,11 @@
 import CustomAlert from "@/components/CustomAlert";
-import { api } from "@/convex/_generated/api";
-import { Doc } from "@/convex/_generated/dataModel";
+import { Database } from "@/lib/database.types";
+import { updateTodo } from "@/lib/todos";
 import useTheme from "@/hooks/useTheme";
 import { useNotifications } from "@/hooks/useNotifications";
-import { useUser } from "@clerk/clerk-expo";
+import { useAuth } from "@/contexts/AuthContext";
 import { Ionicons } from "@expo/vector-icons";
 import DateTimePicker from "@react-native-community/datetimepicker";
-import { useMutation } from "convex/react";
 import { useEffect, useState } from "react";
 import {
     Modal,
@@ -21,7 +20,7 @@ import {
     ActivityIndicator,
 } from "react-native";
 
-type Todo = Doc<"todos">;
+type Todo = Database['public']['Tables']['todos']['Row'];
 
 interface EditTodoModalProps {
   visible: boolean;
@@ -32,7 +31,7 @@ interface EditTodoModalProps {
 
 const EditTodoModal = ({ visible, onClose, todo, onSuccess }: EditTodoModalProps) => {
   const { colors } = useTheme();
-  const { user } = useUser();
+  const { user } = useAuth();
   const { scheduleAllTodoNotifications, cancelTodoNotifications } = useNotifications();
 
   const [title, setTitle] = useState("");
@@ -69,44 +68,46 @@ const EditTodoModal = ({ visible, onClose, todo, onSuccess }: EditTodoModalProps
     buttons: [],
   });
 
-  const updateTodo = useMutation(api.todos.updateTodo);
+
 
   useEffect(() => {
     if (todo) {
       setTitle(todo.title);
       setDescription(todo.description || "");
       setPriority(todo.priority);
-      setCategory(todo.category);
-      setIsRecurring(todo.isRecurring || false);
+      setCategory(todo.category || undefined);
+      setIsRecurring(todo.is_recurring || false);
       setRecurringPattern(
-        (todo.recurringPattern as "daily" | "weekly" | "monthly") || "daily",
+        (todo.recurring_pattern as "daily" | "weekly" | "monthly") || "daily",
       );
 
-      // Handle dueDate based on category
+      // Handle due_date based on category
       if (
         todo.category === "weekly" &&
-        typeof todo.dueDate === "number" &&
-        todo.dueDate < 7
+        typeof todo.due_date === "string" &&
+        !isNaN(Number(todo.due_date)) &&
+        Number(todo.due_date) < 7
       ) {
         // It's a weekday (0-6)
-        setWeekDay(todo.dueDate);
+        setWeekDay(Number(todo.due_date));
         setDueDate(undefined);
       } else if (
         todo.category === "monthly" &&
-        typeof todo.dueDate === "number" &&
-        todo.dueDate <= 31
+        typeof todo.due_date === "string" &&
+        !isNaN(Number(todo.due_date)) &&
+        Number(todo.due_date) <= 31
       ) {
         // It's a day of month (1-31)
-        setDayOfMonth(todo.dueDate);
+        setDayOfMonth(Number(todo.due_date));
         setDueDate(undefined);
-      } else if (todo.dueDate) {
+      } else if (todo.due_date) {
         // It's a timestamp for daily or no category
-        setDueDate(new Date(todo.dueDate));
+        setDueDate(new Date(todo.due_date));
         setWeekDay(undefined);
         setDayOfMonth(undefined);
       }
 
-      setDueTime(todo.dueTime ? parseTimeString(todo.dueTime) : undefined);
+      setDueTime(todo.due_time ? parseTimeString(todo.due_time) : undefined);
     }
   }, [todo]);
 
@@ -242,13 +243,13 @@ const EditTodoModal = ({ visible, onClose, todo, onSuccess }: EditTodoModalProps
 
         // Determine which fields should be explicitly cleared
         const clearCategory = category === undefined && todo.category !== undefined;
-        const clearDueDate = finalDueDate === undefined && todo.dueDate !== undefined;
-        const clearDueTime = finalDueTime === undefined && todo.dueTime !== undefined;
+        const clearDueDate = finalDueDate === undefined && todo.due_date !== undefined;
+        const clearDueTime = finalDueTime === undefined && todo.due_time !== undefined;
         const clearDescription = !description.trim() && !!todo.description;
-        const clearRecurringPattern = !isRecurring && !!todo.recurringPattern;
+        const clearRecurringPattern = !isRecurring && !!todo.recurring_pattern;
 
         await updateTodo({
-          id: todo._id,
+          id: todo.id,
           userId: user.id,
           title: title.trim(),
           description: description.trim() || undefined,
@@ -267,19 +268,35 @@ const EditTodoModal = ({ visible, onClose, todo, onSuccess }: EditTodoModalProps
         });
 
         // Reschedule notifications for the updated todo
-        await cancelTodoNotifications(todo._id);
+        await cancelTodoNotifications(todo.id);
         await scheduleAllTodoNotifications(
-          todo._id,
+          todo.id,
           title.trim(),
           category,
-          todo.createdAt,
+          new Date(todo.created_at).getTime(),
           finalDueDate,
           finalDueTime,
-          todo.isCompleted
+          todo.is_completed,
+          isRecurring  // Pass the NEW recurring status
         );
 
-        onClose();
-        onSuccess?.();
+        // Show success message
+        setAlertConfig({
+          visible: true,
+          title: "Success",
+          message: "Todo updated successfully",
+          buttons: [
+            {
+              text: "OK",
+              onPress: () => {
+                setAlertConfig({ ...alertConfig, visible: false });
+                onClose();
+                onSuccess?.();
+              },
+            },
+          ],
+          type: "success",
+        });
       } catch {
         setAlertConfig({
           visible: true,

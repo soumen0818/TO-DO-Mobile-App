@@ -1,19 +1,16 @@
 import { createSettingsStyles } from "@/assets/styles/settings.styles";
-import { api } from "@/convex/_generated/api";
+import { clearAllTodos } from "@/lib/todos";
 import useTheme from "@/hooks/useTheme";
-import { useUser } from "@clerk/clerk-expo";
+import { useAuth } from "@/contexts/AuthContext";
 import { Ionicons } from "@expo/vector-icons";
-import { useMutation } from "convex/react";
 import { LinearGradient } from "expo-linear-gradient";
 import { Alert, Text, TouchableOpacity, View } from "react-native";
 
 const DangerZone = () => {
   const { colors } = useTheme();
-  const { user } = useUser();
+  const { user } = useAuth();
 
   const settingsStyles = createSettingsStyles(colors);
-
-  const clearAllTodos = useMutation(api.todos.clearAllTodos);
 
   const handleResetApp = async () => {
     if (!user) return;
@@ -28,7 +25,7 @@ const DangerZone = () => {
           style: "destructive",
           onPress: async () => {
             try {
-              const result = await clearAllTodos({ userId: user.id });
+              const result = await clearAllTodos(user.id);
               Alert.alert(
                 "App Reset",
                 `Successfully deleted ${result.deletedCount} todo${result.deletedCount === 1 ? "" : "s"}. Your app has been reset.`,
