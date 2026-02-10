@@ -1,12 +1,12 @@
+import { useAuth } from "@/contexts/AuthContext";
 import useTheme from "@/hooks/useTheme";
-import { useUser } from "@clerk/clerk-expo";
 import { Ionicons } from "@expo/vector-icons";
 import { Redirect, Tabs } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const TabsLayout = () => {
   const { colors } = useTheme();
-  const { user, isLoaded } = useUser();
+  const { user, isLoaded } = useAuth();
   const insets = useSafeAreaInsets();
 
   // Show nothing while loading

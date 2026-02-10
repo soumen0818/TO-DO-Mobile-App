@@ -1,13 +1,12 @@
 import Toast from "@/components/Toast";
-import { api } from "@/convex/_generated/api";
-import { useOAuth, useSignIn, useSignUp, useUser } from "@clerk/clerk-expo";
+import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/lib/supabase";
+import { syncUser } from "@/lib/users";
 import { Ionicons } from "@expo/vector-icons";
-import { useMutation } from "convex/react";
 import { useRouter } from "expo-router";
-import * as WebBrowser from "expo-web-browser";
-import { useCallback, useEffect, useState } from "react";
+import * as Linking from "expo-linking";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Alert,
   Image,
   KeyboardAvoidingView,
   Platform,
@@ -22,52 +21,46 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-WebBrowser.maybeCompleteAuthSession();
-
 export default function SignInScreen() {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === "dark";
 
-  const { startOAuthFlow } = useOAuth({ strategy: "oauth_google" });
-  const { signIn, setActive: setSignInActive } = useSignIn();
-  const { signUp, setActive: setSignUpActive } = useSignUp();
-  const { user } = useUser();
+  const { user } = useAuth();
   const router = useRouter();
-  const syncUser = useMutation(api.users.syncUser);
 
-  // Redirect to tabs if already authenticated
-  useEffect(() => {
-    if (user) {
-      router.replace("/(tabs)");
-    }
-  }, [user, router]);
-
-  // Sync user data to Convex when authenticated
-  useEffect(() => {
-    if (user) {
-      syncUser({
-        clerkId: user.id,
-        email: user.primaryEmailAddress?.emailAddress || "",
-        name: user.fullName || "",
-        imageUrl: user.imageUrl,
-      }).catch(console.error);
-    }
-  }, [user, syncUser]);
-
+  // State declarations
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
   const [isSignUp, setIsSignUp] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [pendingVerification, setPendingVerification] = useState(false);
-  const [verificationCode, setVerificationCode] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   
   // Forgot password states
   const [forgotPassword, setForgotPassword] = useState(false);
-  const [resetCode, setResetCode] = useState("");
+  const [showForgotPasswordOTP, setShowForgotPasswordOTP] = useState(false);
+  const [showResetPassword, setShowResetPassword] = useState(false);
+  const [isResettingPassword, setIsResettingPassword] = useState(false); // Flag to prevent redirect during reset
   const [newPassword, setNewPassword] = useState("");
-  const [pendingReset, setPendingReset] = useState(false);
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  
+  // Rate limiting states
+  const [authAttempts, setAuthAttempts] = useState(0);
+  const [lastAttemptTime, setLastAttemptTime] = useState(0);
+  const [isRateLimited, setIsRateLimited] = useState(false);
+  const [rateLimitCooldown, setRateLimitCooldown] = useState(0);
+  
+  // OTP verification states
+  const [showOTPVerification, setShowOTPVerification] = useState(false);
+  const [otpCode, setOtpCode] = useState("");
+  const [verificationEmail, setVerificationEmail] = useState("");
+  const [resendCooldown, setResendCooldown] = useState(0);
+  
+  // OTP input refs for 6 individual boxes
+  const otpInputRefs = useRef<(TextInput | null)[]>([]);
+  const [otpDigits, setOtpDigits] = useState<string[]>(["", "", "", "", "", ""]);
 
   // Toast state
   const [toastConfig, setToastConfig] = useState({
@@ -76,12 +69,44 @@ export default function SignInScreen() {
     type: "success" as "success" | "error" | "info" | "warning",
   });
 
-  const showToast = (message: string, type: "success" | "error" | "info" | "warning" = "info") => {
+  const showToast = useCallback((message: string, type: "success" | "error" | "info" | "warning" = "info") => {
     setToastConfig({ visible: true, message, type });
+  }, []);
+
+  const hideToast = useCallback(() => {
+    setToastConfig((prev) => ({ ...prev, visible: false }));
+  }, []);
+
+  // Handle OTP digit change
+  const handleOtpChange = (text: string, index: number) => {
+    // Only allow single digit
+    const digit = text.replace(/[^0-9]/g, '').slice(-1);
+    
+    const newDigits = [...otpDigits];
+    newDigits[index] = digit;
+    setOtpDigits(newDigits);
+    
+    // Update combined OTP code
+    setOtpCode(newDigits.join(''));
+    
+    // Auto-focus next input
+    if (digit && index < 5) {
+      otpInputRefs.current[index + 1]?.focus();
+    }
   };
 
-  const hideToast = () => {
-    setToastConfig((prev) => ({ ...prev, visible: false }));
+  // Handle OTP backspace
+  const handleOtpKeyPress = (e: any, index: number) => {
+    if (e.nativeEvent.key === 'Backspace' && !otpDigits[index] && index > 0) {
+      otpInputRefs.current[index - 1]?.focus();
+    }
+  };
+
+  // Clear OTP inputs
+  const clearOtpInputs = () => {
+    setOtpDigits(["", "", "", "", "", ""]);
+    setOtpCode("");
+    otpInputRefs.current[0]?.focus();
   };
 
   const colors = {
@@ -96,134 +121,247 @@ export default function SignInScreen() {
     googleBorder: isDark ? "#38383A" : "#D1D1D6",
   };
 
-  const onGoogleSignIn = useCallback(async () => {
-    try {
-      const { createdSessionId, setActive } = await startOAuthFlow();
-
-      // Dismiss the browser immediately to avoid 404 flash
-      WebBrowser.dismissBrowser();
-
-      if (createdSessionId && setActive) {
-        await setActive({ session: createdSessionId });
+  // Redirect to tabs if already authenticated AND verified
+  useEffect(() => {
+    if (user && !isResettingPassword) {
+      // Only redirect verified users AND not during password reset flow
+      const isEmailVerified = user.email_confirmed_at !== null;
+      const isOAuthUser = user.app_metadata?.provider !== 'email';
+      
+      if (isEmailVerified || isOAuthUser) {
         router.replace("/(tabs)");
       }
-    } catch (err: any) {
-      console.error("OAuth error", JSON.stringify(err, null, 2));
-      if (err?.message?.includes("cancelled") || err?.message?.includes("canceled")) {
-        return;
-      }
-      showToast("Failed to sign in with Google. Please try again.", "error");
     }
-  }, [startOAuthFlow, router]);
+  }, [user, router, isResettingPassword]);
+
+  // Sync user data to database when authenticated AND verified
+  // Skip during password reset flow to avoid RLS issues
+  useEffect(() => {
+    if (user && !isResettingPassword) {
+      // Only sync verified users to database
+      // Email users must have confirmed their email via OTP
+      // OAuth users (Google) are auto-verified
+      const isEmailVerified = user.email_confirmed_at !== null;
+      const isOAuthUser = user.app_metadata?.provider !== 'email';
+      
+      if (isEmailVerified || isOAuthUser) {
+        syncUser({
+          id: user.id,
+          email: user.email || "",
+          name: user.user_metadata?.full_name || user.user_metadata?.name || "",
+          imageUrl: user.user_metadata?.avatar_url || user.user_metadata?.picture,
+        }).catch(console.error);
+      }
+    }
+  }, [user, isResettingPassword]);
+
+  // Resend OTP cooldown timer
+  useEffect(() => {
+    if (resendCooldown > 0) {
+      const timer = setTimeout(() => setResendCooldown(resendCooldown - 1), 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [resendCooldown]);
+
+  // Rate limit cooldown timer
+  useEffect(() => {
+    if (rateLimitCooldown > 0) {
+      const timer = setTimeout(() => {
+        setRateLimitCooldown(rateLimitCooldown - 1);
+        if (rateLimitCooldown === 1) {
+          setIsRateLimited(false);
+          setAuthAttempts(0);
+        }
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [rateLimitCooldown]);
+
+  // Check and enforce rate limiting
+  const checkRateLimit = useCallback((): boolean => {
+    const now = Date.now();
+    const timeSinceLastAttempt = now - lastAttemptTime;
+    
+    // Reset attempts if more than 15 minutes passed
+    if (timeSinceLastAttempt > 15 * 60 * 1000) {
+      setAuthAttempts(0);
+      setIsRateLimited(false);
+      return true;
+    }
+    
+    // Check if rate limited (max 5 attempts per 15 minutes)
+    if (authAttempts >= 5) {
+      if (!isRateLimited) {
+        setIsRateLimited(true);
+        setRateLimitCooldown(300); // 5 minutes cooldown
+        showToast("Too many attempts. Please wait 5 minutes before trying again.", "error");
+      }
+      return false;
+    }
+    
+    // Increment attempts
+    setAuthAttempts(prev => prev + 1);
+    setLastAttemptTime(now);
+    return true;
+  }, [lastAttemptTime, authAttempts, isRateLimited, showToast]);
+
+  const onGoogleSignIn = useCallback(async () => {
+    // Check rate limiting
+    if (isRateLimited) {
+      showToast(`Too many attempts. Please wait ${rateLimitCooldown}s before trying again.`, "warning");
+      return;
+    }
+    
+    if (!checkRateLimit()) {
+      return;
+    }
+
+    try {
+      console.log('[Google OAuth] Starting sign in...');
+      
+      // Use makeRedirectUri for proper deep linking in both Expo Go and production
+      const redirectUri = Linking.createURL('google-callback');
+      console.log('[Google OAuth] Redirect URI:', redirectUri);
+      
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: redirectUri,
+          skipBrowserRedirect: false,
+        },
+      });
+
+      if (error) {
+        console.error('[Google OAuth] Supabase error:', error);
+        throw error;
+      }
+
+      console.log('[Google OAuth] OAuth URL:', data?.url);
+
+      // Open OAuth URL in browser - will redirect back via deep link
+      if (data?.url) {
+        const supported = await Linking.canOpenURL(data.url);
+        console.log('[Google OAuth] Can open URL:', supported);
+        
+        if (supported) {
+          console.log('[Google OAuth] Opening browser...');
+          await Linking.openURL(data.url);
+        } else {
+          throw new Error('Unable to open browser for authentication');
+        }
+      }
+    } catch (err: any) {
+      console.error("[Google OAuth] Error:", err);
+      if (!err?.message?.includes('cancelled') && !err?.message?.includes('canceled')) {
+        showToast("Failed to sign in with Google. Please try again.", "error");
+      }
+    }
+  }, [isRateLimited, rateLimitCooldown, checkRateLimit, showToast]);
 
   const onEmailAuth = async () => {
+    // Check rate limiting
+    if (isRateLimited) {
+      showToast(`Too many attempts. Please wait ${rateLimitCooldown}s before trying again.`, "warning");
+      return;
+    }
+    
+    if (!checkRateLimit()) {
+      return;
+    }
+
     if (!email || !password) {
-      Alert.alert("Error", "Please enter email and password");
+      showToast("Please enter email and password", "error");
       return;
     }
 
     if (isSignUp && !fullName) {
-      Alert.alert("Error", "Please enter your full name");
+      showToast("Please enter your full name", "error");
+      return;
+    }
+
+    if (password.length < 6) {
+      showToast("Password must be at least 6 characters", "error");
       return;
     }
 
     setLoading(true);
     try {
       if (isSignUp) {
-        // Create signup - Clerk will automatically check if email exists
-        try {
-          await signUp!.create({
-            emailAddress: email,
-            password,
-            firstName: fullName.split(" ")[0],
-            lastName:
-              fullName.split(" ").slice(1).join(" ") || fullName.split(" ")[0],
-          });
+        // Sign up with OTP verification
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            data: {
+              full_name: fullName,
+              name: fullName,
+            },
+            // No emailRedirectTo - this will trigger OTP email instead of magic link
+          },
+        });
 
-          await signUp!.prepareEmailAddressVerification({
-            strategy: "email_code",
-          });
+        if (error) throw error;
 
-          setPendingVerification(true);
-        } catch (signUpError: any) {
-          // Check if error is about existing account
-          const errorMsg =
-            signUpError.errors?.[0]?.message || signUpError.message || "";
-          if (
-            errorMsg.toLowerCase().includes("email") &&
-            (errorMsg.toLowerCase().includes("exists") ||
-              errorMsg.toLowerCase().includes("already") ||
-              errorMsg.toLowerCase().includes("taken"))
-          ) {
-            Alert.alert(
-              "Account Exists",
-              "An account with this email already exists. Please sign in instead.",
-              [
-                {
-                  text: "Switch to Sign In",
-                  onPress: () => setIsSignUp(false),
-                },
-                { text: "Cancel", style: "cancel" },
-              ],
-            );
+        if (data?.user) {
+          // Check if email confirmation is required
+          if (data.user.identities && data.user.identities.length === 0) {
+            showToast("This email is already registered. Please sign in instead.", "info");
+            setIsSignUp(false);
           } else {
-            throw signUpError;
+            // Important: Sign out immediately to prevent session creation for unverified users
+            // Session will be created after OTP verification
+            await supabase.auth.signOut();
+            
+            // Show OTP verification screen
+            setVerificationEmail(email);
+            setShowOTPVerification(true);
+            setResendCooldown(60); // 60 seconds cooldown
+            showToast(
+              "Verification code sent! Please check your email.",
+              "success"
+            );
           }
         }
       } else {
         // Sign in
-        try {
-          const result = await signIn!.create({
-            identifier: email,
-            password,
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
+
+        if (error) {
+          if (error.message.includes('Invalid login credentials')) {
+            showToast("Invalid email or password. Please try again.", "error");
+          } else if (error.message.includes('Email not confirmed')) {
+            showToast("Please verify your email before signing in.", "warning");
+          } else {
+            throw error;
+          }
+          return;
+        }
+
+        if (data?.user) {
+          // Sync user to database
+          await syncUser({
+            id: data.user.id,
+            email: data.user.email || "",
+            name: data.user.user_metadata?.full_name || data.user.user_metadata?.name || "",
+            imageUrl: data.user.user_metadata?.avatar_url,
           });
 
-          if (result.status === "complete") {
-            if (result.createdSessionId) {
-              await setSignInActive!({ session: result.createdSessionId });
-            }
-            router.replace("/(tabs)");
-          } else if (result.status === "needs_second_factor") {
-            // 2FA is enabled on this account - must be disabled from Clerk dashboard
-            Alert.alert(
-              "Two-Factor Authentication Required",
-              "This account has 2FA enabled. Please disable it from your Clerk dashboard:\n\n1. Go to dashboard.clerk.com\n2. Select your project\n3. Click 'Users'\n4. Click on this user\n5. Scroll to 'Multi-factor' section\n6. Remove the authenticator",
-              [{ text: "OK" }],
-            );
-          } else {
-            console.log("Sign in status:", result.status);
-            Alert.alert("Error", "Sign in incomplete. Please try again.");
-          }
-        } catch (signInError: any) {
-          console.error("Sign in error:", signInError);
-          // Handle sign-in errors
-          const errorMsg =
-            signInError.errors?.[0]?.message || signInError.message || "";
-          if (
-            errorMsg.toLowerCase().includes("identifier") ||
-            errorMsg.toLowerCase().includes("password") ||
-            errorMsg.toLowerCase().includes("incorrect")
-          ) {
-            Alert.alert(
-              "Error",
-              "Invalid email or password. Please try again.",
-            );
-          } else {
-            throw signInError;
-          }
+          showToast("Signed in successfully!", "success");
+          router.replace("/(tabs)");
         }
       }
     } catch (err: any) {
       console.error("Email auth error", err);
-      const errorMessage =
-        err.errors?.[0]?.message || err.message || "Authentication failed";
-      Alert.alert("Error", errorMessage);
+      showToast(err.message || "Authentication failed", "error");
     } finally {
       setLoading(false);
     }
   };
 
-  // Forgot password - send reset code
+  // Forgot password - send OTP
   const onForgotPassword = async () => {
     if (!email) {
       showToast("Please enter your email address", "warning");
@@ -232,122 +370,236 @@ export default function SignInScreen() {
 
     setLoading(true);
     try {
-      // Step 1: Create sign-in with identifier first
-      const signInAttempt = await signIn!.create({
-        identifier: email,
-      });
+      const { error } = await supabase.auth.resetPasswordForEmail(email);
 
-      // Step 2: Check if reset_password_email_code is available
-      const resetFactor = signInAttempt.supportedFirstFactors?.find(
-        (factor: any) => factor.strategy === "reset_password_email_code"
-      );
+      if (error) throw error;
 
-      // Check if user signed up with Google (no password)
-      const hasGoogleFactor = signInAttempt.supportedFirstFactors?.find(
-        (factor: any) => factor.strategy === "oauth_google"
-      );
-
-      if (!resetFactor) {
-        if (hasGoogleFactor) {
-          showToast("This account uses Google Sign-In. Please sign in with Google instead.", "info");
-        } else {
-          showToast("Password reset is not available for this account", "error");
-        }
-        setForgotPassword(false);
-        return;
-      }
-
-      // Step 3: Prepare the password reset
-      await signIn!.prepareFirstFactor({
-        strategy: "reset_password_email_code",
-        emailAddressId: (resetFactor as any).emailAddressId,
-      });
-
-      setPendingReset(true);
-      showToast("Reset code sent! Check your email.", "success");
+      // Show OTP verification screen for forgot password
+      setVerificationEmail(email);
+      setShowForgotPasswordOTP(true);
+      setForgotPassword(false);
+      setResendCooldown(60);
+      showToast("Verification code sent! Check your email.", "success");
     } catch (err: any) {
       console.error("Forgot password error", err);
-      const errorMessage = err.errors?.[0]?.message || err.errors?.[0]?.longMessage || "Failed to send reset code. Make sure the email exists.";
-      showToast(errorMessage, "error");
+      showToast(err.message || "Failed to send reset code", "error");
     } finally {
       setLoading(false);
     }
   };
 
-  // Reset password with code
-  const onResetPassword = async () => {
-    if (!resetCode || !newPassword) {
-      showToast("Please enter the code and new password", "warning");
-      return;
-    }
-
-    if (newPassword.length < 8) {
-      showToast("Password must be at least 8 characters", "warning");
+  // Verify OTP for forgot password
+  const onVerifyForgotPasswordOTP = async () => {
+    if (!otpCode || otpCode.length !== 6) {
+      showToast("Please enter a valid 6-digit code", "error");
       return;
     }
 
     setLoading(true);
     try {
-      const result = await signIn!.attemptFirstFactor({
-        strategy: "reset_password_email_code",
-        code: resetCode,
+      const { error } = await supabase.auth.verifyOtp({
+        email: verificationEmail,
+        token: otpCode,
+        type: 'recovery',
+      });
+
+      if (error) throw error;
+
+      showToast("Code verified! Now set your new password.", "success");
+      
+      // Set flag to prevent redirect during password reset
+      setIsResettingPassword(true);
+      
+      // Move to reset password screen
+      setShowForgotPasswordOTP(false);
+      setShowResetPassword(true);
+      clearOtpInputs();
+    } catch (err: any) {
+      console.error("OTP verification error", err);
+      if (err.message.includes('expired')) {
+        showToast("Verification code expired. Please request a new one.", "error");
+      } else if (err.message.includes('invalid')) {
+        showToast("Invalid verification code. Please try again.", "error");
+      } else {
+        showToast(err.message || "Verification failed", "error");
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Resend forgot password OTP
+  const onResendForgotPasswordOTP = async () => {
+    if (resendCooldown > 0) {
+      showToast(`Please wait ${resendCooldown}s before resending`, "warning");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      // For password recovery, call resetPasswordForEmail again to send new OTP
+      const { error } = await supabase.auth.resetPasswordForEmail(verificationEmail);
+
+      if (error) throw error;
+
+      showToast("New verification code sent!", "success");
+      clearOtpInputs();
+      setResendCooldown(60);
+    } catch (err: any) {
+      console.error("Resend OTP error", err);
+      showToast(err.message || "Failed to resend code", "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Reset password after OTP verification
+  const onResetPassword = async () => {
+    if (!newPassword || !confirmPassword) {
+      showToast("Please enter both password fields", "error");
+      return;
+    }
+
+    if (newPassword.length < 6) {
+      showToast("Password must be at least 6 characters", "error");
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      showToast("Passwords do not match", "error");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const { error } = await supabase.auth.updateUser({
         password: newPassword,
       });
 
-      if (result.status === "complete") {
-        await setSignInActive!({ session: result.createdSessionId });
-        showToast("Password reset successfully!", "success");
-        // Small delay to show toast before navigating
-        setTimeout(() => {
-          router.replace("/(tabs)");
-        }, 1000);
-      } else if (result.status === "needs_second_factor") {
-        showToast("2FA required. Please contact support.", "error");
-      }
+      if (error) throw error;
+
+      showToast("Password reset successful! You can now sign in.", "success");
+      
+      // Reset all states
+      setShowResetPassword(false);
+      setIsResettingPassword(false); // Clear flag
+      setVerificationEmail("");
+      setNewPassword("");
+      setConfirmPassword("");
+      setEmail("");
+      setPassword("");
+      setIsSignUp(false);
+      
+      // Sign out to allow fresh login
+      await supabase.auth.signOut();
     } catch (err: any) {
       console.error("Reset password error", err);
-      const errorMessage = err.errors?.[0]?.message || err.errors?.[0]?.longMessage || "Invalid code or password. Please try again.";
-      showToast(errorMessage, "error");
+      showToast(err.message || "Failed to reset password", "error");
     } finally {
       setLoading(false);
     }
   };
 
-  const onVerifyCode = async () => {
-    if (!verificationCode) {
-      Alert.alert("Error", "Please enter the verification code");
+  // Cancel forgot password flow
+  const onCancelForgotPasswordFlow = () => {
+    setShowForgotPasswordOTP(false);
+    setShowResetPassword(false);
+    setIsResettingPassword(false); // Clear flag
+    clearOtpInputs();
+    setVerificationEmail("");
+    setNewPassword("");
+    setConfirmPassword("");
+    setResendCooldown(0);
+  };
+
+  // Verify OTP code
+  const onVerifyOTP = async () => {
+    if (!otpCode || otpCode.length !== 6) {
+      showToast("Please enter a valid 6-digit code", "error");
       return;
     }
 
     setLoading(true);
     try {
-      const result = await signUp!.attemptEmailAddressVerification({
-        code: verificationCode,
+      const { data, error } = await supabase.auth.verifyOtp({
+        email: verificationEmail,
+        token: otpCode,
+        type: 'email',
       });
 
-      if (result.createdSessionId) {
-        await setSignUpActive!({ session: result.createdSessionId });
+      if (error) throw error;
 
-        // Sync user to Convex database after successful signup
-        try {
-          await syncUser({
-            clerkId: result.createdUserId || "",
-            email: email,
-            name: fullName,
-            imageUrl: undefined,
-          });
-        } catch (syncError) {
-          console.error("Error syncing user to database:", syncError);
-        }
+      if (data?.user) {
+        // Sync user to database
+        await syncUser({
+          id: data.user.id,
+          email: data.user.email || "",
+          name: data.user.user_metadata?.full_name || data.user.user_metadata?.name || "",
+          imageUrl: data.user.user_metadata?.avatar_url,
+        });
 
+        showToast("Email verified successfully!", "success");
+        
+        // Reset states
+        setShowOTPVerification(false);
+        clearOtpInputs();
+        setVerificationEmail("");
+        setEmail("");
+        setPassword("");
+        setFullName("");
+        setIsSignUp(false);
+        
+        // Navigate to tabs
         router.replace("/(tabs)");
       }
     } catch (err: any) {
-      console.error("Verification error", err);
-      Alert.alert("Error", err.errors?.[0]?.message || "Verification failed");
+      console.error("OTP verification error", err);
+      if (err.message.includes('expired')) {
+        showToast("Verification code expired. Please request a new one.", "error");
+      } else if (err.message.includes('invalid')) {
+        showToast("Invalid verification code. Please try again.", "error");
+      } else {
+        showToast(err.message || "Verification failed", "error");
+      }
     } finally {
       setLoading(false);
     }
+  };
+
+  // Resend OTP code
+  const onResendOTP = async () => {
+    if (resendCooldown > 0) {
+      showToast(`Please wait ${resendCooldown}s before resending`, "warning");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      // Use Supabase resend() method for signup OTP
+      const { error } = await supabase.auth.resend({
+        type: 'signup',
+        email: verificationEmail,
+      });
+
+      if (error) throw error;
+
+      showToast("New verification code sent!", "success");
+      clearOtpInputs(); // Clear previous code
+      setResendCooldown(60); // Reset cooldown
+    } catch (err: any) {
+      console.error("Resend OTP error", err);
+      showToast(err.message || "Failed to resend code", "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Cancel OTP verification
+  const onCancelOTPVerification = () => {
+    setShowOTPVerification(false);
+    clearOtpInputs();
+    setVerificationEmail("");
+    setResendCooldown(0);
   };
 
   return (
@@ -371,239 +623,370 @@ export default function SignInScreen() {
             contentContainerStyle={styles.scrollContent}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
-        >
-          {/* Top: App Icon and Name */}
-          <View style={styles.header}>
-            <Image
-              source={require("../assets/images/todo-app-logo.png")}
-              style={styles.appLogo}
-              resizeMode="contain"
-            />
-            <Text style={[styles.appName, { color: colors.text }]}>
-              Zenith Task
-            </Text>
-          </View>
+          >
+            {/* Top: App Icon and Name */}
+            <View style={styles.header}>
+              <Image
+                source={require("../assets/images/todo-app-logo.png")}
+                style={styles.appLogo}
+                resizeMode="contain"
+              />
+              <Text style={[styles.appName, { color: colors.text }]}>
+                Zenith Task
+              </Text>
+            </View>
 
-          {/* Auth Form */}
-          <View style={styles.formSection}>
-            {pendingVerification ? (
-              <>
-                <Text style={[styles.welcomeText, { color: colors.text }]}>
-                  Verify Your Email
-                </Text>
-                <Text
-                  style={[
-                    styles.verificationSubtext,
-                    { color: colors.textSecondary },
-                  ]}
-                >
-                  We sent a code to {email}
-                </Text>
-
-                <View style={styles.inputGroup}>
-                  <TextInput
+            {/* Auth Form */}
+            <View style={styles.formSection}>
+              {showOTPVerification ? (
+                <>
+                  <Text style={[styles.welcomeText, { color: colors.text }]}>
+                    Verify Your Email
+                  </Text>
+                  <Text
                     style={[
-                      styles.input,
-                      {
-                        backgroundColor: colors.inputBackground,
-                        color: colors.text,
-                        borderColor: colors.border,
-                      },
-                    ]}
-                    placeholder="Enter 6-digit code"
-                    value={verificationCode}
-                    onChangeText={setVerificationCode}
-                    keyboardType="number-pad"
-                    maxLength={6}
-                    placeholderTextColor={colors.textSecondary}
-                  />
-
-                  <TouchableOpacity
-                    onPress={onVerifyCode}
-                    activeOpacity={0.7}
-                    disabled={loading}
-                    style={[
-                      styles.primaryButton,
-                      { backgroundColor: colors.buttonBackground },
+                      styles.verificationSubtext,
+                      { color: colors.textSecondary },
                     ]}
                   >
-                    <Text
-                      style={[
-                        styles.primaryButtonText,
-                        { color: colors.buttonText },
-                      ]}
-                    >
-                      {loading ? "Verifying..." : "Verify Email"}
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    onPress={() => setPendingVerification(false)}
-                    style={styles.switchContainer}
+                    Enter the 6-digit code sent to
+                  </Text>
+                  <Text
+                    style={[
+                      styles.verificationEmail,
+                      { color: colors.text },
+                    ]}
                   >
-                    <Text
+                    {verificationEmail}
+                  </Text>
+
+                  <View style={styles.inputGroup}>
+                    {/* 6-Digit OTP Input Boxes */}
+                    <View style={styles.otpContainer}>
+                      {otpDigits.map((digit, index) => (
+                        <TextInput
+                          key={index}
+                          ref={(ref) => {
+                            otpInputRefs.current[index] = ref;
+                          }}
+                          style={[
+                            styles.otpBox,
+                            {
+                              backgroundColor: colors.inputBackground,
+                              color: colors.text,
+                              borderColor: digit ? colors.buttonBackground : colors.border,
+                              borderWidth: digit ? 2 : 1,
+                            },
+                          ]}
+                          value={digit}
+                          onChangeText={(text) => handleOtpChange(text, index)}
+                          onKeyPress={(e) => handleOtpKeyPress(e, index)}
+                          keyboardType="number-pad"
+                          maxLength={1}
+                          selectTextOnFocus
+                          autoFocus={index === 0}
+                        />
+                      ))}
+                    </View>
+
+                    <TouchableOpacity
+                      onPress={onVerifyOTP}
+                      activeOpacity={0.7}
+                      disabled={loading || otpCode.length !== 6}
                       style={[
-                        styles.switchText,
-                        { color: colors.textSecondary },
+                        styles.primaryButton,
+                        { 
+                          backgroundColor: colors.buttonBackground,
+                          opacity: (loading || otpCode.length !== 6) ? 0.5 : 1,
+                        },
                       ]}
                     >
-                      Wrong email?{" "}
                       <Text
                         style={[
-                          styles.switchTextBold,
+                          styles.primaryButtonText,
+                          { color: colors.buttonText },
+                        ]}
+                      >
+                        {loading ? "Verifying..." : "Verify Code"}
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      onPress={onResendOTP}
+                      disabled={resendCooldown > 0}
+                      style={[
+                        styles.resendButton,
+                        { opacity: resendCooldown > 0 ? 0.5 : 1 },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.resendText,
                           { color: colors.buttonBackground },
                         ]}
                       >
-                        Go back
+                        {resendCooldown > 0 
+                          ? `Resend code in ${resendCooldown}s` 
+                          : "Resend code"}
                       </Text>
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              </>
-            ) : forgotPassword ? (
-              <>
-                <Text style={[styles.welcomeText, { color: colors.text }]}>
-                  {pendingReset ? "Reset Password" : "Forgot Password"}
-                </Text>
-                <Text
-                  style={[
-                    styles.verificationSubtext,
-                    { color: colors.textSecondary },
-                  ]}
-                >
-                  {pendingReset
-                    ? "Enter the code sent to your email and your new password"
-                    : "Enter your email to receive a reset code"}
-                </Text>
+                    </TouchableOpacity>
 
-                <View style={styles.inputGroup}>
-                  {!pendingReset ? (
-                    <>
-                      <TextInput
-                        style={[
-                          styles.input,
-                          {
-                            backgroundColor: colors.inputBackground,
-                            color: colors.text,
-                            borderColor: colors.border,
-                          },
-                        ]}
-                        placeholder="Email"
-                        value={email}
-                        onChangeText={setEmail}
-                        autoCapitalize="none"
-                        keyboardType="email-address"
-                        placeholderTextColor={colors.textSecondary}
-                      />
-
-                      <TouchableOpacity
-                        onPress={onForgotPassword}
-                        activeOpacity={0.7}
-                        disabled={loading}
-                        style={[
-                          styles.primaryButton,
-                          { backgroundColor: colors.buttonBackground },
-                        ]}
+                    <TouchableOpacity
+                      onPress={onCancelOTPVerification}
+                      style={styles.switchContainer}
+                    >
+                      <Text
+                        style={[styles.switchText, { color: colors.textSecondary }]}
                       >
                         <Text
                           style={[
-                            styles.primaryButtonText,
-                            { color: colors.buttonText },
+                            styles.switchTextBold,
+                            { color: colors.buttonBackground },
                           ]}
                         >
-                          {loading ? "Sending..." : "Send Reset Code"}
+                          ← Back to sign in
                         </Text>
-                      </TouchableOpacity>
-                    </>
-                  ) : (
-                    <>
-                      <TextInput
-                        style={[
-                          styles.input,
-                          {
-                            backgroundColor: colors.inputBackground,
-                            color: colors.text,
-                            borderColor: colors.border,
-                          },
-                        ]}
-                        placeholder="Enter 6-digit code"
-                        value={resetCode}
-                        onChangeText={setResetCode}
-                        keyboardType="number-pad"
-                        maxLength={6}
-                        placeholderTextColor={colors.textSecondary}
-                      />
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
+              ) : showForgotPasswordOTP ? (
+                <>
+                  <Text style={[styles.welcomeText, { color: colors.text }]}>
+                    Verify Your Email
+                  </Text>
+                  <Text
+                    style={[
+                      styles.verificationSubtext,
+                      { color: colors.textSecondary },
+                    ]}
+                  >
+                    Enter the 6-digit code sent to
+                  </Text>
+                  <Text
+                    style={[
+                      styles.verificationEmail,
+                      { color: colors.text },
+                    ]}
+                  >
+                    {verificationEmail}
+                  </Text>
 
+                  <View style={styles.inputGroup}>
+                    {/* 6-Digit OTP Input Boxes */}
+                    <View style={styles.otpContainer}>
+                      {otpDigits.map((digit, index) => (
+                        <TextInput
+                          key={index}
+                          ref={(ref) => {
+                            otpInputRefs.current[index] = ref;
+                          }}
+                          style={[
+                            styles.otpBox,
+                            {
+                              backgroundColor: colors.inputBackground,
+                              color: colors.text,
+                              borderColor: digit ? colors.buttonBackground : colors.border,
+                              borderWidth: digit ? 2 : 1,
+                            },
+                          ]}
+                          value={digit}
+                          onChangeText={(text) => handleOtpChange(text, index)}
+                          onKeyPress={(e) => handleOtpKeyPress(e, index)}
+                          keyboardType="number-pad"
+                          maxLength={1}
+                          selectTextOnFocus
+                          autoFocus={index === 0}
+                        />
+                      ))}
+                    </View>
+
+                    <TouchableOpacity
+                      onPress={onVerifyForgotPasswordOTP}
+                      activeOpacity={0.7}
+                      disabled={loading || otpCode.length !== 6}
+                      style={[
+                        styles.primaryButton,
+                        { 
+                          backgroundColor: colors.buttonBackground,
+                          opacity: (loading || otpCode.length !== 6) ? 0.5 : 1,
+                        },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.primaryButtonText,
+                          { color: colors.buttonText },
+                        ]}
+                      >
+                        {loading ? "Verifying..." : "Verify Code"}
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      onPress={onResendForgotPasswordOTP}
+                      disabled={resendCooldown > 0}
+                      style={[
+                        styles.resendButton,
+                        { opacity: resendCooldown > 0 ? 0.5 : 1 },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.resendText,
+                          { color: colors.buttonBackground },
+                        ]}
+                      >
+                        {resendCooldown > 0 
+                          ? `Resend code in ${resendCooldown}s` 
+                          : "Resend code"}
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      onPress={onCancelForgotPasswordFlow}
+                      style={styles.switchContainer}
+                    >
+                      <Text
+                        style={[styles.switchText, { color: colors.textSecondary }]}
+                      >
+                        <Text
+                          style={[
+                            styles.switchTextBold,
+                            { color: colors.buttonBackground },
+                          ]}
+                        >
+                          ← Back to sign in
+                        </Text>
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
+              ) : showResetPassword ? (
+                <>
+                  <Text style={[styles.welcomeText, { color: colors.text }]}>
+                    Reset Password
+                  </Text>
+                  <Text
+                    style={[
+                      styles.verificationSubtext,
+                      { color: colors.textSecondary },
+                    ]}
+                  >
+                    Create a strong new password for your account
+                  </Text>
+
+                  <View style={styles.inputGroup}>
+                    <View style={styles.passwordContainer}>
                       <TextInput
                         style={[
-                          styles.input,
+                          styles.passwordInput,
                           {
                             backgroundColor: colors.inputBackground,
                             color: colors.text,
                             borderColor: colors.border,
                           },
                         ]}
-                        placeholder="New Password (min 8 characters)"
+                        placeholder="New Password"
                         value={newPassword}
                         onChangeText={setNewPassword}
-                        secureTextEntry
+                        secureTextEntry={!showNewPassword}
+                        placeholderTextColor={colors.textSecondary}
+                        autoFocus
+                      />
+                      <TouchableOpacity
+                        onPress={() => setShowNewPassword(!showNewPassword)}
+                        style={styles.eyeIcon}
+                      >
+                        <Ionicons
+                          name={showNewPassword ? "eye-off-outline" : "eye-outline"}
+                          size={22}
+                          color={colors.textSecondary}
+                        />
+                      </TouchableOpacity>
+                    </View>
+
+                    <View style={styles.passwordContainer}>
+                      <TextInput
+                        style={[
+                          styles.passwordInput,
+                          {
+                            backgroundColor: colors.inputBackground,
+                            color: colors.text,
+                            borderColor: colors.border,
+                          },
+                        ]}
+                        placeholder="Confirm New Password"
+                        value={confirmPassword}
+                        onChangeText={setConfirmPassword}
+                        secureTextEntry={!showConfirmPassword}
                         placeholderTextColor={colors.textSecondary}
                       />
-
                       <TouchableOpacity
-                        onPress={onResetPassword}
-                        activeOpacity={0.7}
-                        disabled={loading}
+                        onPress={() => setShowConfirmPassword(!showConfirmPassword)}
+                        style={styles.eyeIcon}
+                      >
+                        <Ionicons
+                          name={showConfirmPassword ? "eye-off-outline" : "eye-outline"}
+                          size={22}
+                          color={colors.textSecondary}
+                        />
+                      </TouchableOpacity>
+                    </View>
+
+                    <TouchableOpacity
+                      onPress={onResetPassword}
+                      activeOpacity={0.7}
+                      disabled={loading}
+                      style={[
+                        styles.primaryButton,
+                        { backgroundColor: colors.buttonBackground },
+                      ]}
+                    >
+                      <Text
                         style={[
-                          styles.primaryButton,
-                          { backgroundColor: colors.buttonBackground },
+                          styles.primaryButtonText,
+                          { color: colors.buttonText },
                         ]}
+                      >
+                        {loading ? "Resetting..." : "Reset Password"}
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      onPress={onCancelForgotPasswordFlow}
+                      style={styles.switchContainer}
+                    >
+                      <Text
+                        style={[styles.switchText, { color: colors.textSecondary }]}
                       >
                         <Text
                           style={[
-                            styles.primaryButtonText,
-                            { color: colors.buttonText },
+                            styles.switchTextBold,
+                            { color: colors.buttonBackground },
                           ]}
                         >
-                          {loading ? "Resetting..." : "Reset Password"}
+                          ← Back to sign in
                         </Text>
-                      </TouchableOpacity>
-                    </>
-                  )}
-
-                  <TouchableOpacity
-                    onPress={() => {
-                      setForgotPassword(false);
-                      setPendingReset(false);
-                      setResetCode("");
-                      setNewPassword("");
-                    }}
-                    style={styles.switchContainer}
-                  >
-                    <Text
-                      style={[styles.switchText, { color: colors.textSecondary }]}
-                    >
-                      Remember your password?{" "}
-                      <Text
-                        style={[
-                          styles.switchTextBold,
-                          { color: colors.buttonBackground },
-                        ]}
-                      >
-                        Sign In
                       </Text>
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              </>
-            ) : (
-              <>
-                <Text style={[styles.welcomeText, { color: colors.text }]}>
-                  {isSignUp ? "Create Account" : "Welcome Back"}
-                </Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
+              ) : forgotPassword ? (
+                <>
+                  <Text style={[styles.welcomeText, { color: colors.text }]}>
+                    Forgot Password
+                  </Text>
+                  <Text
+                    style={[
+                      styles.verificationSubtext,
+                      { color: colors.textSecondary },
+                    ]}
+                  >
+                    Enter your email to receive a verification code
+                  </Text>
 
-                <View style={styles.inputGroup}>
-                  {isSignUp && (
+                  <View style={styles.inputGroup}>
                     <TextInput
                       style={[
                         styles.input,
@@ -613,172 +996,236 @@ export default function SignInScreen() {
                           borderColor: colors.border,
                         },
                       ]}
-                      placeholder="Full Name"
-                      value={fullName}
-                      onChangeText={setFullName}
-                      autoCapitalize="words"
+                      placeholder="Email"
+                      value={email}
+                      onChangeText={setEmail}
+                      autoCapitalize="none"
+                      keyboardType="email-address"
                       placeholderTextColor={colors.textSecondary}
                     />
-                  )}
 
-                  <TextInput
-                    style={[
-                      styles.input,
-                      {
-                        backgroundColor: colors.inputBackground,
-                        color: colors.text,
-                        borderColor: colors.border,
-                      },
-                    ]}
-                    placeholder="Email"
-                    value={email}
-                    onChangeText={setEmail}
-                    autoCapitalize="none"
-                    keyboardType="email-address"
-                    placeholderTextColor={colors.textSecondary}
-                  />
+                    <TouchableOpacity
+                      onPress={onForgotPassword}
+                      activeOpacity={0.7}
+                      disabled={loading}
+                      style={[
+                        styles.primaryButton,
+                        { backgroundColor: colors.buttonBackground },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.primaryButtonText,
+                          { color: colors.buttonText },
+                        ]}
+                      >
+                        {loading ? "Sending..." : "Send Verification Code"}
+                      </Text>
+                    </TouchableOpacity>
 
-                  <View style={styles.passwordContainer}>
+                    <TouchableOpacity
+                      onPress={() => setForgotPassword(false)}
+                      style={styles.switchContainer}
+                    >
+                      <Text
+                        style={[styles.switchText, { color: colors.textSecondary }]}
+                      >
+                        Remember your password?{" "}
+                        <Text
+                          style={[
+                            styles.switchTextBold,
+                            { color: colors.buttonBackground },
+                          ]}
+                        >
+                          Sign In
+                        </Text>
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
+              ) : (
+                <>
+                  <Text style={[styles.welcomeText, { color: colors.text }]}>
+                    {isSignUp ? "Create Account" : "Welcome Back"}
+                  </Text>
+
+                  <View style={styles.inputGroup}>
+                    {isSignUp && (
+                      <TextInput
+                        style={[
+                          styles.input,
+                          {
+                            backgroundColor: colors.inputBackground,
+                            color: colors.text,
+                            borderColor: colors.border,
+                          },
+                        ]}
+                        placeholder="Full Name"
+                        value={fullName}
+                        onChangeText={setFullName}
+                        autoCapitalize="words"
+                        placeholderTextColor={colors.textSecondary}
+                      />
+                    )}
+
                     <TextInput
                       style={[
-                        styles.passwordInput,
+                        styles.input,
                         {
                           backgroundColor: colors.inputBackground,
                           color: colors.text,
                           borderColor: colors.border,
                         },
                       ]}
-                      placeholder="Password"
-                      value={password}
-                      onChangeText={setPassword}
-                      secureTextEntry={!showPassword}
+                      placeholder="Email"
+                      value={email}
+                      onChangeText={setEmail}
+                      autoCapitalize="none"
+                      keyboardType="email-address"
                       placeholderTextColor={colors.textSecondary}
                     />
-                    <TouchableOpacity
-                      onPress={() => setShowPassword(!showPassword)}
-                      style={styles.eyeIcon}
-                    >
-                      <Ionicons
-                        name={showPassword ? "eye-off-outline" : "eye-outline"}
-                        size={22}
-                        color={colors.textSecondary}
-                      />
-                    </TouchableOpacity>
-                  </View>
 
-                  {/* Forgot Password Link - only show on sign in */}
-                  {!isSignUp && (
+                    <View style={styles.passwordContainer}>
+                      <TextInput
+                        style={[
+                          styles.passwordInput,
+                          {
+                            backgroundColor: colors.inputBackground,
+                            color: colors.text,
+                            borderColor: colors.border,
+                          },
+                        ]}
+                        placeholder="Password"
+                        value={password}
+                        onChangeText={setPassword}
+                        secureTextEntry={!showPassword}
+                        placeholderTextColor={colors.textSecondary}
+                      />
+                      <TouchableOpacity
+                        onPress={() => setShowPassword(!showPassword)}
+                        style={styles.eyeIcon}
+                      >
+                        <Ionicons
+                          name={showPassword ? "eye-off-outline" : "eye-outline"}
+                          size={22}
+                          color={colors.textSecondary}
+                        />
+                      </TouchableOpacity>
+                    </View>
+
+                    {/* Forgot Password Link - only show on sign in */}
+                    {!isSignUp && (
+                      <TouchableOpacity
+                        onPress={() => setForgotPassword(true)}
+                        style={styles.forgotPasswordContainer}
+                      >
+                        <Text
+                          style={[
+                            styles.forgotPasswordText,
+                            { color: colors.buttonBackground },
+                          ]}
+                        >
+                          Forgot Password?
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+
                     <TouchableOpacity
-                      onPress={() => setForgotPassword(true)}
-                      style={styles.forgotPasswordContainer}
+                      onPress={onEmailAuth}
+                      activeOpacity={0.7}
+                      disabled={loading}
+                      style={[
+                        styles.primaryButton,
+                        { backgroundColor: colors.buttonBackground },
+                      ]}
                     >
                       <Text
                         style={[
-                          styles.forgotPasswordText,
+                          styles.primaryButtonText,
+                          { color: colors.buttonText },
+                        ]}
+                      >
+                        {loading
+                          ? "Loading..."
+                          : isSignUp
+                            ? "Sign Up"
+                            : "Sign In"}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  <View style={styles.dividerContainer}>
+                    <View
+                      style={[
+                        styles.dividerLine,
+                        { backgroundColor: colors.border },
+                      ]}
+                    />
+                    <Text
+                      style={[
+                        styles.dividerText,
+                        { color: colors.textSecondary },
+                      ]}
+                    >
+                      OR
+                    </Text>
+                    <View
+                      style={[
+                        styles.dividerLine,
+                        { backgroundColor: colors.border },
+                      ]}
+                    />
+                  </View>
+
+                  <TouchableOpacity
+                    onPress={onGoogleSignIn}
+                    activeOpacity={0.7}
+                    style={[
+                      styles.googleButton,
+                      {
+                        backgroundColor: colors.googleButton,
+                        borderColor: colors.googleBorder,
+                      },
+                    ]}
+                  >
+                    <Image
+                      source={require("../assets/images/google-icon.png")}
+                      style={styles.googleIconImage}
+                      resizeMode="contain"
+                    />
+                    <Text
+                      style={[styles.googleButtonText, { color: colors.text }]}
+                    >
+                      Continue with Google
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={() => setIsSignUp(!isSignUp)}
+                    style={styles.switchContainer}
+                  >
+                    <Text
+                      style={[styles.switchText, { color: colors.textSecondary }]}
+                    >
+                      {isSignUp
+                        ? "Already have an account? "
+                        : "Don't have an account? "}
+                      <Text
+                        style={[
+                          styles.switchTextBold,
                           { color: colors.buttonBackground },
                         ]}
                       >
-                        Forgot Password?
+                        {isSignUp ? "Sign In" : "Sign Up"}
                       </Text>
-                    </TouchableOpacity>
-                  )}
-
-                  <TouchableOpacity
-                    onPress={onEmailAuth}
-                    activeOpacity={0.7}
-                    disabled={loading}
-                    style={[
-                      styles.primaryButton,
-                      { backgroundColor: colors.buttonBackground },
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.primaryButtonText,
-                        { color: colors.buttonText },
-                      ]}
-                    >
-                      {loading
-                        ? "Loading..."
-                        : isSignUp
-                          ? "Sign Up"
-                          : "Sign In"}
                     </Text>
                   </TouchableOpacity>
-                </View>
-
-                <View style={styles.dividerContainer}>
-                  <View
-                    style={[
-                      styles.dividerLine,
-                      { backgroundColor: colors.border },
-                    ]}
-                  />
-                  <Text
-                    style={[
-                      styles.dividerText,
-                      { color: colors.textSecondary },
-                    ]}
-                  >
-                    OR
-                  </Text>
-                  <View
-                    style={[
-                      styles.dividerLine,
-                      { backgroundColor: colors.border },
-                    ]}
-                  />
-                </View>
-
-                <TouchableOpacity
-                  onPress={onGoogleSignIn}
-                  activeOpacity={0.7}
-                  style={[
-                    styles.googleButton,
-                    {
-                      backgroundColor: colors.googleButton,
-                      borderColor: colors.googleBorder,
-                    },
-                  ]}
-                >
-                  <Image
-                    source={require("../assets/images/google-icon.png")}
-                    style={styles.googleIconImage}
-                    resizeMode="contain"
-                  />
-                  <Text
-                    style={[styles.googleButtonText, { color: colors.text }]}
-                  >
-                    Continue with Google
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  onPress={() => setIsSignUp(!isSignUp)}
-                  style={styles.switchContainer}
-                >
-                  <Text
-                    style={[styles.switchText, { color: colors.textSecondary }]}
-                  >
-                    {isSignUp
-                      ? "Already have an account? "
-                      : "Don't have an account? "}
-                    <Text
-                      style={[
-                        styles.switchTextBold,
-                        { color: colors.buttonBackground },
-                      ]}
-                    >
-                      {isSignUp ? "Sign In" : "Sign Up"}
-                    </Text>
-                  </Text>
-                </TouchableOpacity>
-              </>
-            )}
-          </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+                </>
+              )}
+            </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
     </>
   );
 }
@@ -910,6 +1357,37 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   forgotPasswordText: {
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  // OTP Verification styles
+  verificationEmail: {
+    fontSize: 15,
+    fontWeight: "600",
+    textAlign: "center",
+    marginTop: 4,
+    marginBottom: 20,
+  },
+  otpContainer: {
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: 8,
+    marginBottom: 12,
+  },
+  otpBox: {
+    width: 48,
+    height: 56,
+    borderRadius: 12,
+    fontSize: 24,
+    fontWeight: "700",
+    textAlign: "center",
+  },
+  resendButton: {
+    alignItems: "center",
+    paddingVertical: 10,
+    marginTop: 4,
+  },
+  resendText: {
     fontSize: 14,
     fontWeight: "600",
   },
