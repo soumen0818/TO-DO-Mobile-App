@@ -1,9 +1,8 @@
 import CustomAlert from "@/components/CustomAlert";
-import { api } from "@/convex/_generated/api";
+import { submitFeedback as submitFeedbackFn } from "@/lib/feedback";
 import useTheme from "@/hooks/useTheme";
-import { useUser } from "@clerk/clerk-expo";
+import { useAuth } from "@/contexts/AuthContext";
 import { Ionicons } from "@expo/vector-icons";
-import { useMutation } from "convex/react";
 import { LinearGradient } from "expo-linear-gradient";
 import { useState } from "react";
 import {
@@ -30,7 +29,7 @@ type FeedbackType = "feature" | "bug";
 
 const FeedbackModal = ({ visible, onClose }: FeedbackModalProps) => {
   const { colors } = useTheme();
-  const { user } = useUser();
+  const { user } = useAuth();
 
   const [feedbackType, setFeedbackType] = useState<FeedbackType>("feature");
   const [title, setTitle] = useState("");
@@ -48,7 +47,7 @@ const FeedbackModal = ({ visible, onClose }: FeedbackModalProps) => {
     type: "info" as "info" | "warning" | "error" | "success",
   });
 
-  const submitFeedback = useMutation(api.feedback.submitFeedback);
+
 
   const handleSubmit = async () => {
     if (!title.trim()) {
@@ -69,36 +68,18 @@ const FeedbackModal = ({ visible, onClose }: FeedbackModalProps) => {
       return;
     }
 
-    if (!description.trim()) {
-      setAlertConfig({
-        visible: true,
-        title: "Description Required",
-        message: "Please provide a description for your feedback.",
-        buttons: [
-          {
-            text: "OK",
-            style: "default",
-            onPress: () =>
-              setAlertConfig((prev) => ({ ...prev, visible: false })),
-          },
-        ],
-        type: "warning",
-      });
-      return;
-    }
-
     if (!user) return;
 
     setIsLoading(true);
     try {
-      // Submit feedback to database (email is automatically captured from Clerk)
-      await submitFeedback({
+      // Submit feedback to database
+      await submitFeedbackFn({
         userId: user.id,
-        userEmail: user.primaryEmailAddress?.emailAddress || "",
-        userName: user.fullName || user.firstName || undefined,
+        userEmail: user.email || "",
+        userName: user.user_metadata?.full_name || user.user_metadata?.name || undefined,
         type: feedbackType,
         title: title.trim(),
-        description: description.trim(),
+        description: description.trim() || undefined,
       });
 
       // Reset form
@@ -164,8 +145,9 @@ const FeedbackModal = ({ visible, onClose }: FeedbackModalProps) => {
         onRequestClose={handleClose}
       >
         <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
           style={styles.keyboardView}
+          keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 20}
         >
           <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
             <View style={styles.overlay}>
@@ -200,6 +182,7 @@ const FeedbackModal = ({ visible, onClose }: FeedbackModalProps) => {
                   <ScrollView
                     showsVerticalScrollIndicator={false}
                     keyboardShouldPersistTaps="handled"
+                    contentContainerStyle={{ paddingBottom: 20 }}
                   >
                     {/* Feedback Type Toggle */}
                     <View style={styles.typeContainer}>
@@ -293,7 +276,7 @@ const FeedbackModal = ({ visible, onClose }: FeedbackModalProps) => {
                   {/* Description Input */}
                   <View style={styles.inputContainer}>
                     <Text style={styles.label}>
-                      Description <Text style={styles.requiredStar}>*</Text>
+                      Description
                     </Text>
                     <TextInput
                       style={[styles.input, styles.textArea]}
@@ -323,7 +306,7 @@ const FeedbackModal = ({ visible, onClose }: FeedbackModalProps) => {
                       color={colors.primary}
                     />
                     <Text style={styles.infoText}>
-                      Submitting as {user?.primaryEmailAddress?.emailAddress || "user"}
+                      Submitting as {user?.email || "user"}
                     </Text>
                   </View>
 

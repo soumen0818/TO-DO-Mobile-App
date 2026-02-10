@@ -1,9 +1,8 @@
-import { api } from "@/convex/_generated/api";
+import { useAuth } from "@/contexts/AuthContext";
 import useTheme from "@/hooks/useTheme";
-import { useUser } from "@clerk/clerk-expo";
+import { getTodosExpiringSoon } from "@/lib/todos";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useQuery } from "convex/react";
 import { LinearGradient } from "expo-linear-gradient";
 import { useEffect, useState } from "react";
 import {
@@ -14,20 +13,28 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { Database } from "@/lib/database.types";
 
 const EXPIRATION_NOTICE_KEY = "lastExpirationNoticeShown";
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 
+type Todo = Database['public']['Tables']['todos']['Row'];
+
 const ExpirationNotice = () => {
   const { colors } = useTheme();
-  const { user } = useUser();
+  const { user } = useAuth();
   const [visible, setVisible] = useState(false);
   const [hasCheckedStorage, setHasCheckedStorage] = useState(false);
+  const [expiringTodos, setExpiringTodos] = useState<Todo[]>([]);
 
-  const expiringTodos = useQuery(
-    api.autoDelete.getTodosExpiringSoon,
-    user ? { userId: user.id } : "skip",
-  );
+  // Fetch expiring todos
+  useEffect(() => {
+    if (!user) return;
+
+    getTodosExpiringSoon(user.id)
+      .then(setExpiringTodos)
+      .catch(console.error);
+  }, [user]);
 
   // Check if we should show the notice (once per day)
   useEffect(() => {
@@ -122,7 +129,7 @@ const ExpirationNotice = () => {
           {/* Todo list preview */}
           <View style={[styles.todoPreview, { backgroundColor: colors.bg }]}>
             {expiringTodos.slice(0, 3).map((todo, index) => (
-              <View key={todo._id} style={styles.todoItem}>
+              <View key={todo.id} style={styles.todoItem}>
                 <Ionicons name="time-outline" size={16} color={colors.warning} />
                 <Text
                   style={[styles.todoText, { color: colors.text }]}
