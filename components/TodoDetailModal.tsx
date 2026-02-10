@@ -1,4 +1,3 @@
-import { Doc } from "@/convex/_generated/dataModel";
 import useTheme from "@/hooks/useTheme";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
@@ -11,8 +10,10 @@ import {
     TouchableOpacity,
     View,
 } from "react-native";
+import { Database } from "@/lib/database.types";
+import { isInWarningWindow, getHoursUntilDeletion, calculateExpirationTime } from "@/utils/expirationUtils";
 
-type Todo = Doc<"todos">;
+type Todo = Database['public']['Tables']['todos']['Row'];
 
 interface TodoDetailModalProps {
   visible: boolean;
@@ -22,79 +23,33 @@ interface TodoDetailModalProps {
   hoursUntilDeletion?: number;
 }
 
-// Calculate expiration info for a todo - matches logic in convex/autoDelete.ts
+// Calculate expiration info for a todo using centralized utilities
 const getExpirationInfo = (todo: Todo): { isExpiringSoon: boolean; hoursUntilDeletion: number; expirationDate: Date } | null => {
-  // Recurring todos never expire
-  if (todo.isRecurring === true) {
+  // Check if in warning window
+  if (!isInWarningWindow(todo)) {
     return null;
   }
 
-  const now = Date.now();
-  let expirationTime: number = 0;
-  let notificationTime: number = 0;
-
-  // Handle undefined/null category (Others) - check for falsy to match both null and undefined
-  if (!todo.category) {
-    if (todo.dueDate && todo.dueTime) {
-      // If date and time are set, delete 24 hours after that time
-      const dueDateObj = new Date(todo.dueDate);
-      const [time, period] = todo.dueTime.split(" ");
-      const timeParts = time.split(":").map(Number);
-      let hours = timeParts[0];
-      const minutes = timeParts[1];
-
-      if (period === "PM" && hours !== 12) hours += 12;
-      if (period === "AM" && hours === 12) hours = 0;
-
-      dueDateObj.setHours(hours, minutes, 0, 0);
-      expirationTime = dueDateObj.getTime() + 24 * 60 * 60 * 1000;
-    } else {
-      // If no date/time set, delete 24 hours after creation
-      expirationTime = todo.createdAt + 24 * 60 * 60 * 1000;
-    }
-    // For "Others" category: notification 12 hours before expiration
-    notificationTime = expirationTime - 12 * 60 * 60 * 1000;
-  } else {
-    // For daily/weekly/monthly: use createdAt with end of day in UTC
-    const createdDate = new Date(todo.createdAt);
-    createdDate.setUTCHours(23, 59, 59, 999);
-
-    switch (todo.category) {
-      case "daily":
-        // Delete after 1 day + 24 hour grace period = 2 days total
-        expirationTime = createdDate.getTime() + 2 * 24 * 60 * 60 * 1000;
-        notificationTime = expirationTime - 24 * 60 * 60 * 1000;
-        break;
-      case "weekly":
-        // Delete after 7 days + 24 hour grace period = 8 days total
-        expirationTime = createdDate.getTime() + 8 * 24 * 60 * 60 * 1000;
-        notificationTime = expirationTime - 24 * 60 * 60 * 1000;
-        break;
-      case "monthly":
-        // Delete after 30 days + 24 hour grace period = 31 days total
-        expirationTime = createdDate.getTime() + 31 * 24 * 60 * 60 * 1000;
-        notificationTime = expirationTime - 24 * 60 * 60 * 1000;
-        break;
-      default:
-        // Fallback for any unexpected category value
-        expirationTime = createdDate.getTime() + 2 * 24 * 60 * 60 * 1000;
-        notificationTime = expirationTime - 24 * 60 * 60 * 1000;
-        break;
-    }
-  }
-
-  // Only show if in notification window (now >= notificationTime && now < expirationTime)
-  const isInNotificationWindow = now >= notificationTime && now < expirationTime;
-  
-  if (!isInNotificationWindow) {
+  const hours = getHoursUntilDeletion(todo);
+  if (hours === null) {
     return null;
   }
 
-  const hoursUntilDeletion = Math.max(0, Math.ceil((expirationTime - now) / (1000 * 60 * 60)));
+  const expirationTime = calculateExpirationTime(
+    todo.created_at,
+    todo.category,
+    todo.is_recurring,
+    todo.due_date,
+    todo.due_time
+  );
+
+  if (expirationTime === null) {
+    return null;
+  }
 
   return {
     isExpiringSoon: true,
-    hoursUntilDeletion,
+    hoursUntilDeletion: hours,
     expirationDate: new Date(expirationTime),
   };
 };
@@ -115,9 +70,9 @@ const TodoDetailModal: React.FC<TodoDetailModalProps> = ({
   const calculateExpirationDate = (t: Todo): Date => {
     let expirationTime: number;
     if (!t.category) {
-      if (t.dueDate && t.dueTime) {
-        const dueDateObj = new Date(t.dueDate);
-        const [time, period] = t.dueTime.split(" ");
+      if (t.due_date && t.due_time) {
+        const dueDateObj = new Date(t.due_date);
+        const [time, period] = t.due_time.split(" ");
         const timeParts = time.split(":").map(Number);
         let hours = timeParts[0];
         const minutes = timeParts[1];
@@ -126,10 +81,10 @@ const TodoDetailModal: React.FC<TodoDetailModalProps> = ({
         dueDateObj.setHours(hours, minutes, 0, 0);
         expirationTime = dueDateObj.getTime() + 24 * 60 * 60 * 1000;
       } else {
-        expirationTime = t.createdAt + 24 * 60 * 60 * 1000;
+        expirationTime = new Date(t.created_at).getTime() + 24 * 60 * 60 * 1000;
       }
     } else {
-      const createdDate = new Date(t.createdAt);
+      const createdDate = new Date(t.created_at);
       createdDate.setUTCHours(23, 59, 59, 999);
       switch (t.category) {
         case "daily":
@@ -159,9 +114,10 @@ const TodoDetailModal: React.FC<TodoDetailModalProps> = ({
 
   if (!todo) return null;
 
-  const formatDate = (timestamp: number | undefined) => {
+  const formatDate = (timestamp: number | string | undefined) => {
     if (!timestamp) return null;
-    return new Date(timestamp).toLocaleDateString("en-US", {
+    const date = typeof timestamp === 'string' ? new Date(timestamp) : new Date(timestamp);
+    return date.toLocaleDateString("en-US", {
       weekday: "long",
       year: "numeric",
       month: "long",
@@ -190,34 +146,34 @@ const TodoDetailModal: React.FC<TodoDetailModalProps> = ({
   const renderDueDateInfo = () => {
     if (!todo.category) {
       // Others category - show regular date
-      if (todo.dueDate) {
-        return formatDate(todo.dueDate);
+      if (todo.due_date) {
+        return formatDate(todo.due_date);
       }
       return "No date set";
     }
 
     if (
       todo.category === "weekly" &&
-      typeof todo.dueDate === "number" &&
-      todo.dueDate < 7
+      typeof todo.due_date === "number" &&
+      todo.due_date < 7
     ) {
-      return `Every ${getWeekdayName(todo.dueDate)}`;
+      return `Every ${getWeekdayName(todo.due_date)}`;
     }
 
     if (
       todo.category === "monthly" &&
-      typeof todo.dueDate === "number" &&
-      todo.dueDate <= 31
+      typeof todo.due_date === "number" &&
+      todo.due_date <= 31
     ) {
-      return `Day ${todo.dueDate} of every month`;
+      return `Day ${todo.due_date} of every month`;
     }
 
     if (
-      todo.dueDate &&
-      typeof todo.dueDate === "number" &&
-      todo.dueDate > 100
+      todo.due_date &&
+      typeof todo.due_date === "number" &&
+      todo.due_date > 100
     ) {
-      return formatDate(todo.dueDate);
+      return formatDate(todo.due_date);
     }
 
     return "No date set";
@@ -262,7 +218,7 @@ const TodoDetailModal: React.FC<TodoDetailModalProps> = ({
   };
 
   const getStatusIcon = () => {
-    return todo.isCompleted ? "checkmark-circle" : "ellipse-outline";
+    return todo.is_completed ? "checkmark-circle" : "ellipse-outline";
   };
 
   return (
@@ -305,7 +261,7 @@ const TodoDetailModal: React.FC<TodoDetailModalProps> = ({
             <View style={styles.statusPriorityRow}>
               <LinearGradient
                 colors={
-                  todo.isCompleted
+                  todo.is_completed
                     ? colors.gradients.success
                     : [colors.border, colors.border]
                 }
@@ -314,15 +270,15 @@ const TodoDetailModal: React.FC<TodoDetailModalProps> = ({
                 <Ionicons
                   name={getStatusIcon()}
                   size={16}
-                  color={todo.isCompleted ? "#fff" : colors.text}
+                  color={todo.is_completed ? "#fff" : colors.text}
                 />
                 <Text
                   style={[
                     styles.badgeText,
-                    { color: todo.isCompleted ? "#fff" : colors.text },
+                    { color: todo.is_completed ? "#fff" : colors.text },
                   ]}
                 >
-                  {todo.isCompleted ? "Completed" : "Pending"}
+                  {todo.is_completed ? "Completed" : "Pending"}
                 </Text>
               </LinearGradient>
 
@@ -356,7 +312,7 @@ const TodoDetailModal: React.FC<TodoDetailModalProps> = ({
               >
                 <Ionicons name="folder" size={14} color={colors.primary} />
                 <Text style={[styles.badgeText, { color: colors.primary }]}>
-                  {getCategoryDisplay(todo.category)}
+                  {getCategoryDisplay(todo.category || undefined)}
                 </Text>
               </View>
             </View>
@@ -415,13 +371,13 @@ const TodoDetailModal: React.FC<TodoDetailModalProps> = ({
                   Due Time
                 </Text>
                 <Text style={[styles.infoValue, { color: colors.text }]}>
-                  {todo.dueTime || "Not set"}
+                  {todo.due_time || "Not set"}
                 </Text>
               </View>
             </View>
 
             {/* Recurring Badge (if applicable) */}
-            {todo.isRecurring && (
+            {todo.is_recurring && (
               <View style={styles.recurringSection}>
                 <LinearGradient
                   colors={[`${colors.primary}20`, `${colors.primary}10`]}
@@ -433,7 +389,7 @@ const TodoDetailModal: React.FC<TodoDetailModalProps> = ({
                   <Text
                     style={[styles.recurringText, { color: colors.primary }]}
                   >
-                    Repeats {todo.recurringPattern?.toUpperCase()}
+                    Repeats {todo.recurring_pattern?.toUpperCase()}
                   </Text>
                 </LinearGradient>
               </View>
@@ -485,14 +441,14 @@ const TodoDetailModal: React.FC<TodoDetailModalProps> = ({
                 <Text
                   style={[styles.timestampText, { color: colors.textMuted }]}
                 >
-                  {new Date(todo.createdAt).toLocaleDateString()} at{" "}
-                  {new Date(todo.createdAt).toLocaleTimeString([], {
+                  {new Date(todo.created_at).toLocaleDateString()} at{" "}
+                  {new Date(todo.created_at).toLocaleTimeString([], {
                     hour: "2-digit",
                     minute: "2-digit",
                   })}
                 </Text>
               </View>
-              {todo.completedAt && (
+              {todo.completed_at && (
                 <View style={styles.timestampRow}>
                   <Ionicons
                     name="checkmark-circle"
@@ -502,8 +458,8 @@ const TodoDetailModal: React.FC<TodoDetailModalProps> = ({
                   <Text
                     style={[styles.timestampText, { color: colors.textMuted }]}
                   >
-                    {new Date(todo.completedAt).toLocaleDateString()} at{" "}
-                    {new Date(todo.completedAt).toLocaleTimeString([], {
+                    {new Date(todo.completed_at).toLocaleDateString()} at{" "}
+                    {new Date(todo.completed_at).toLocaleTimeString([], {
                       hour: "2-digit",
                       minute: "2-digit",
                     })}

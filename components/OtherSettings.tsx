@@ -1,30 +1,27 @@
 import { createSettingsStyles } from "@/assets/styles/settings.styles";
 import CustomAlert from "@/components/CustomAlert";
 import FeedbackModal from "@/components/FeedbackModal";
-import { api } from "@/convex/_generated/api";
+import { clearAllTodos } from "@/lib/todos";
 import useTheme from "@/hooks/useTheme";
-import { useUser } from "@clerk/clerk-expo";
+import { useAuth } from "@/contexts/AuthContext";
 import { Ionicons } from "@expo/vector-icons";
-import { useMutation } from "convex/react";
 import { LinearGradient } from "expo-linear-gradient";
 import { useState } from "react";
 import { Text, TouchableOpacity, View } from "react-native";
 
 const OtherSettings = () => {
   const { colors } = useTheme();
-  const { user } = useUser();
+  const { user } = useAuth();
   const settingsStyles = createSettingsStyles(colors);
 
+  const [feedbackModalVisible, setFeedbackModalVisible] = useState(false);
   const [alertConfig, setAlertConfig] = useState({
     visible: false,
     title: "",
     message: "",
-    buttons: [] as any[],
-    type: "info" as "info" | "warning" | "error" | "success",
+    buttons: [] as { text: string; style: "default" | "cancel" | "destructive"; onPress: () => void }[],
+    type: "info" as "info" | "success" | "warning" | "error",
   });
-  const [feedbackModalVisible, setFeedbackModalVisible] = useState(false);
-
-  const clearAllTodos = useMutation(api.todos.clearAllTodos);
 
   const handleFeedback = () => {
     setFeedbackModalVisible(true);
@@ -82,7 +79,7 @@ const OtherSettings = () => {
           onPress: async () => {
             if (!user) return;
             try {
-              const result = await clearAllTodos({ userId: user.id });
+              const result = await clearAllTodos(user.id);
               setAlertConfig({
                 visible: true,
                 title: "App Reset Complete",
