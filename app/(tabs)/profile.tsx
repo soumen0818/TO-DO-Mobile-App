@@ -1,13 +1,12 @@
 import { createSettingsStyles } from "@/assets/styles/settings.styles";
 import CustomAlert from "@/components/CustomAlert";
-import { api } from "@/convex/_generated/api";
+import { useAuth } from "@/contexts/AuthContext";
+import { getUserStats } from "@/lib/todos";
 import useTheme from "@/hooks/useTheme";
-import { useAuth, useUser } from "@clerk/clerk-expo";
 import { Ionicons } from "@expo/vector-icons";
-import { useQuery } from "convex/react";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
     Image,
     ScrollView,
@@ -19,8 +18,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 const ProfileScreen = () => {
   const { colors } = useTheme();
-  const { user } = useUser();
-  const { signOut } = useAuth();
+  const { user, signOut } = useAuth();
   const router = useRouter();
   const settingsStyles = createSettingsStyles(colors);
 
@@ -32,10 +30,16 @@ const ProfileScreen = () => {
     type: "info" as "info" | "warning" | "error" | "success",
   });
 
-  const stats = useQuery(
-    api.todos.getUserStats,
-    user ? { userId: user.id } : "skip",
-  );
+  const [stats, setStats] = useState<any>(null);
+
+  // Fetch user stats
+  useEffect(() => {
+    if (user) {
+      getUserStats(user.id)
+        .then(setStats)
+        .catch(console.error);
+    }
+  }, [user]);
 
   const handleSignOut = () => {
     setAlertConfig({
@@ -109,17 +113,10 @@ const ProfileScreen = () => {
             colors={colors.gradients.surface}
             style={settingsStyles.section}
           >
-            <View
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                paddingVertical: 16,
-                gap: 16,
-              }}
-            >
-              {user?.imageUrl ? (
+            <View style={{ paddingVertical: 16, gap: 16, flexDirection: 'row', alignItems: 'center' }}>
+              {user?.user_metadata?.avatar_url || user?.user_metadata?.picture ? (
                 <Image
-                  source={{ uri: user.imageUrl }}
+                  source={{ uri: user.user_metadata.avatar_url || user.user_metadata.picture }}
                   style={{
                     width: 70,
                     height: 70,
@@ -152,7 +149,7 @@ const ProfileScreen = () => {
                     marginBottom: 4,
                   }}
                 >
-                  {user?.fullName || user?.firstName || "User"}
+                  {user?.user_metadata?.full_name || user?.user_metadata?.name || "User"}
                 </Text>
                 <Text
                   style={{
@@ -161,7 +158,7 @@ const ProfileScreen = () => {
                   }}
                   numberOfLines={1}
                 >
-                  {user?.primaryEmailAddress?.emailAddress}
+                  {user?.email}
                 </Text>
               </View>
             </View>

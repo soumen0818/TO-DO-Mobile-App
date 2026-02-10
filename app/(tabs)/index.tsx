@@ -9,13 +9,14 @@ import Toast from "@/components/Toast";
 import TodoDetailModal from "@/components/TodoDetailModal";
 import TodoInput from "@/components/Todoinput";
 import { useSettings } from "@/contexts/SettingsContext";
-import { api } from "@/convex/_generated/api";
-import { Doc, Id } from "@/convex/_generated/dataModel";
+import { useAuth } from "@/contexts/AuthContext";
+import { getTodosByCategory, getTodosExpiringSoon, toggleTodo as toggleTodoFn, deleteTodo as deleteTodoFn } from "@/lib/todos";
+import { Database } from "@/lib/database.types";
 import { useNotifications } from "@/hooks/useNotifications";
+import { useAutoDelete } from "@/hooks/useAutoDelete";
+import { isInWarningWindow } from "@/utils/expirationUtils";
 import useTheme from "@/hooks/useTheme";
-import { useUser } from "@clerk/clerk-expo";
 import { Ionicons } from "@expo/vector-icons";
-import { useMutation, useQuery } from "convex/react";
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -39,13 +40,16 @@ type CategoryCache = {
   others: Todo[] | undefined;
 };
 
-type Todo = Doc<"todos">;
+type Todo = Database['public']['Tables']['todos']['Row'];
 
 export default function Index() {
   const { colors } = useTheme();
-  const { user } = useUser();
+  const { user } = useAuth();
   const { isAutoSync, hapticsEnabled } = useSettings();
   const { cancelTodoNotifications } = useNotifications();
+  
+  // Auto-delete expired todos on app load
+  useAutoDelete();
 
   const [editingTodo, setEditingTodo] = useState<Todo | null>(null);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -97,28 +101,94 @@ export default function Index() {
 
   const homeStyles = createHomeStyles(colors);
 
-  const rawTodos = useQuery(
-    api.todos.getTodosByCategory,
-    user
-      ? {
-          userId: user.id,
-          category:
-            selectedCategory === "others" ? undefined : selectedCategory,
-        }
-      : "skip",
-  );
+  const [rawTodos, setRawTodos] = useState<Todo[] | undefined>(undefined);
+  const [expiringTodos, setExpiringTodos] = useState<Todo[] | undefined>(undefined);
 
-  // Query for todos expiring soon (within 24 hours)
-  const expiringTodos = useQuery(
-    api.autoDelete.getTodosExpiringSoon,
-    user ? { userId: user.id } : "skip",
-  );
+  // Fetch todos by category with improved performance
+  useEffect(() => {
+    if (!user) return;
+
+    const fetchTodos = async () => {
+      try {
+        const category = selectedCategory === "others" ? undefined : selectedCategory;
+        const todos = await getTodosByCategory(user.id, category);
+        setRawTodos(todos);
+        
+        // Update cache immediately for instant display
+        setCategoryCache((prev) => ({
+          ...prev,
+          [selectedCategory]: todos,
+        }));
+      } catch (error) {
+        console.error('Error fetching todos:', error);
+      }
+    };
+
+    fetchTodos();
+  }, [user, selectedCategory]);
+
+  // Fetch expiring todos
+  useEffect(() => {
+    if (!user) return;
+
+    const fetchExpiringTodos = async () => {
+      try {
+        const todos = await getTodosExpiringSoon(user.id);
+        setExpiringTodos(todos);
+      } catch (error) {
+        console.error('Error fetching expiring todos:', error);
+      }
+    };
+
+    fetchExpiringTodos();
+  }, [user]);
+
+  // Prefetch adjacent categories for instant switching
+  useEffect(() => {
+    if (!user || !isAutoSync) return;
+
+    const categories: ("daily" | "weekly" | "monthly" | "others")[] = [
+      "daily",
+      "weekly",
+      "monthly",
+      "others",
+    ];
+    const currentIndex = categories.indexOf(selectedCategory);
+
+    // Prefetch next and previous categories
+    const prefetchCategories = [
+      categories[currentIndex - 1],
+      categories[currentIndex + 1],
+    ].filter(Boolean);
+
+    prefetchCategories.forEach(async (cat) => {
+      // Only prefetch if not already cached and different from current
+      if (!categoryCache[cat] && cat !== selectedCategory) {
+        try {
+          const category = cat === "others" ? undefined : cat;
+          const todos = await getTodosByCategory(user.id, category);
+          setCategoryCache((prev) => ({
+            ...prev,
+            [cat]: todos,
+          }));
+        } catch (error) {
+          // Silent fail for prefetching
+          console.debug(`Prefetch ${cat} skipped:`, error);
+        }
+      }
+    });
+  }, [user, selectedCategory, isAutoSync, categoryCache]);
 
   // Memoized set of expiring todo IDs for quick lookup
   const expiringTodoIds = useMemo(() => {
     if (!expiringTodos) return new Set<string>();
-    return new Set(expiringTodos.map((todo) => todo._id));
+    return new Set(expiringTodos.map((todo) => todo.id));
   }, [expiringTodos]);
+
+  // Also check todos directly for expiring status (in case expiring list is stale)
+  const isExpiring = useCallback((todo: Todo) => {
+    return expiringTodoIds.has(todo.id) || isInWarningWindow(todo);
+  }, [expiringTodoIds]);
 
   // Use per-category cache for instant switching, then update with fresh data
   // Priority: optimistic > raw data > category cache
@@ -132,9 +202,6 @@ export default function Index() {
   // For autoSync OFF mode, use cachedTodos
   const todos = isAutoSync ? displayTodos : (cachedTodos ?? displayTodos);
 
-  const toggleTodo = useMutation(api.todos.toggleTodo);
-  const deleteTodo = useMutation(api.todos.deleteTodo);
-
   const isLoading =
     rawTodos === undefined && !user && !categoryCache[selectedCategory];
 
@@ -142,23 +209,19 @@ export default function Index() {
   const isLoadingFreshData =
     rawTodos === undefined && categoryCache[selectedCategory] !== undefined;
 
-  // Update per-category cache when data arrives
+  // Update per-category cache when data arrives (minimal delay)
   useEffect(() => {
     if (rawTodos !== undefined) {
-      setCategoryCache((prev) => ({
-        ...prev,
-        [selectedCategory]: rawTodos,
-      }));
-      // Fade-in when data arrives
+      // Quick fade-in when data arrives
       Animated.timing(fadeAnim, {
         toValue: 1,
-        duration: 150,
+        duration: 80,
         useNativeDriver: true,
       }).start();
     }
-  }, [rawTodos, selectedCategory, fadeAnim]);
+  }, [rawTodos, fadeAnim]);
 
-  // Handle category change with smooth transition
+  // Handle category change with instant transition
   const handleCategoryChange = useCallback(
     (category: typeof selectedCategory) => {
       if (category === selectedCategory) return;
@@ -166,23 +229,16 @@ export default function Index() {
       if (hapticsEnabled)
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
-      // Quick fade out
-      Animated.timing(fadeAnim, {
-        toValue: 0.6,
-        duration: 100,
-        useNativeDriver: true,
-      }).start(() => {
-        setSelectedCategory(category);
-
-        // If we have cached data, fade back in quickly
-        if (categoryCache[category]) {
-          Animated.timing(fadeAnim, {
-            toValue: 1,
-            duration: 100,
-            useNativeDriver: true,
-          }).start();
-        }
-      });
+      // Instant category switch - no animation delay
+      setSelectedCategory(category);
+      
+      // If we have cached data, set opacity immediately
+      if (categoryCache[category]) {
+        fadeAnim.setValue(1);
+      } else {
+        // Only fade if loading fresh data
+        fadeAnim.setValue(0.6);
+      }
     },
     [selectedCategory, hapticsEnabled, categoryCache, fadeAnim],
   );
@@ -242,43 +298,41 @@ export default function Index() {
   const handleOpenAddModal = () => {
     if (hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
-    // No limits for "others" category
-    if (selectedCategory !== "others") {
-      const limits = { daily: 10, weekly: 20, monthly: 30 };
-      const currentLimit = limits[selectedCategory];
-      const currentCount = todos?.length || 0;
+    // Check limits for all categories
+    const limits = { daily: 30, weekly: 20, monthly: 30, others: 50 };
+    const currentLimit = limits[selectedCategory];
+    const currentCount = todos?.length || 0;
 
-      if (currentCount >= currentLimit) {
-        setAlertConfig({
-          visible: true,
-          title: "Limit Reached",
-          message: `You have reached the maximum of ${currentLimit} todos for ${selectedCategory} category. Please delete some todos first.`,
-          buttons: [
-            {
-              text: "OK",
-              onPress: () => setAlertConfig({ ...alertConfig, visible: false }),
-            },
-          ],
-          type: "warning",
-        });
-        return;
-      }
+  if (currentCount >= currentLimit) {
+      setAlertConfig({
+        visible: true,
+        title: "Limit Reached",
+        message: `You have reached the maximum of ${currentLimit} todos for ${selectedCategory} category. Please delete some todos first.`,
+        buttons: [
+          {
+            text: "OK",
+            onPress: () => setAlertConfig({ ...alertConfig, visible: false }),
+          },
+        ],
+        type: "warning",
+      });
+      return;
     }
 
     setShowAddModal(true);
   };
 
-  const handleToggleTodo = async (id: Id<"todos">) => {
+  const handleToggleTodo = async (id: string) => {
     if (!user || !rawTodos) return;
 
     // Find the todo to check if it's being completed
-    const todo = rawTodos.find((t) => t._id === id);
-    const isBeingCompleted = todo && !todo.isCompleted;
+    const todo = rawTodos.find((t) => t.id === id);
+    const isBeingCompleted = todo && !todo.is_completed;
 
     // Optimistic update: immediately update local state
     const updatedTodos = rawTodos.map((todo) =>
-      todo._id === id
-        ? { ...todo, completedAt: todo.completedAt ? undefined : Date.now() }
+      todo.id === id
+        ? { ...todo, is_completed: !todo.is_completed, completed_at: todo.completed_at ? null : new Date().toISOString() }
         : todo,
     );
     setOptimisticTodos(updatedTodos);
@@ -292,14 +346,25 @@ export default function Index() {
     if (hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
     try {
-      await toggleTodo({ id, userId: user.id });
+      await toggleTodoFn(id, user.id);
 
-      // Cancel notifications when todo is completed
+      // If todo is being completed, cancel its notifications
       if (isBeingCompleted) {
         await cancelTodoNotifications(id);
       }
 
-      // Reset optimistic state to show actual server data
+      // Refetch to get updated data from server
+      const category = selectedCategory === "others" ? undefined : selectedCategory;
+      const todos = await getTodosByCategory(user.id, category);
+      setRawTodos(todos);
+      
+      // Update cache immediately
+      setCategoryCache((prev) => ({
+        ...prev,
+        [selectedCategory]: todos,
+      }));
+
+      // Reset optimistic state now that we have fresh data
       setOptimisticTodos(undefined);
     } catch {
       // Revert optimistic update on error
@@ -318,7 +383,7 @@ export default function Index() {
     }
   };
 
-  const handleDeleteTodo = async (id: Id<"todos">) => {
+  const handleDeleteTodo = async (id: string) => {
     if (!user) return;
 
     // Haptic feedback for warning
@@ -340,10 +405,10 @@ export default function Index() {
           onPress: async () => {
             // Optimistically update cache if autoSync is OFF
             if (!isAutoSync && cachedTodos) {
-              setCachedTodos(cachedTodos.filter((todo) => todo._id !== id));
+              setCachedTodos(cachedTodos.filter((todo) => todo.id !== id));
             }
             try {
-              await deleteTodo({ id, userId: user.id });
+              await deleteTodoFn(id, user.id);
 
               // Cancel all notifications for this todo
               await cancelTodoNotifications(id);
@@ -398,7 +463,7 @@ export default function Index() {
   };
 
   const renderTodoItem = ({ item }: { item: Todo }) => {
-    const isExpiringSoon = expiringTodoIds.has(item._id);
+    const isExpiringSoon = isExpiring(item);
 
     return (
       <View style={homeStyles.todoItemWrapper}>
@@ -411,9 +476,9 @@ export default function Index() {
           <TouchableOpacity
             style={homeStyles.checkbox}
             activeOpacity={0.7}
-            onPress={() => handleToggleTodo(item._id)}
+            onPress={() => handleToggleTodo(item.id)}
           >
-            {item.isCompleted ? (
+            {item.is_completed ? (
               <LinearGradient
                 colors={colors.gradients.success}
                 style={homeStyles.checkboxInner}
@@ -443,7 +508,7 @@ export default function Index() {
               <Text
                 style={[
                   homeStyles.todoText,
-                  item.isCompleted && homeStyles.todoTextCompleted,
+                  item.is_completed && homeStyles.todoTextCompleted,
                 ]}
                 numberOfLines={2}
               >
@@ -451,7 +516,7 @@ export default function Index() {
               </Text>
 
               {/* Completed Badge */}
-              {item.isCompleted && (
+              {item.is_completed && (
                 <View style={homeStyles.completedBadgeContainer}>
                   <LinearGradient
                     colors={colors.gradients.success}
@@ -464,7 +529,7 @@ export default function Index() {
               )}
 
               {/* Expiring Soon Badge */}
-              {isExpiringSoon && !item.isCompleted && (
+              {isExpiringSoon && !item.is_completed && (
                 <View style={homeStyles.expiringBadgeContainer}>
                   <LinearGradient
                     colors={colors.gradients.warning}
@@ -481,7 +546,7 @@ export default function Index() {
                 <Text
                   style={[
                     homeStyles.todoDescription,
-                    item.isCompleted && homeStyles.todoDescriptionCompleted,
+                    item.is_completed && homeStyles.todoDescriptionCompleted,
                   ]}
                   numberOfLines={2}
                   ellipsizeMode="tail"
@@ -491,43 +556,43 @@ export default function Index() {
               )}
 
               {/* Due Date & Time */}
-              {(item.dueDate || item.dueTime) && (
+              {(item.due_date || item.due_time) && (
                 <View style={homeStyles.todoMetaRow}>
-                  {item.dueDate && (
+                  {item.due_date && (
                     <View style={homeStyles.metaItem}>
                       <Ionicons
                         name="calendar-outline"
                         size={14}
                         color={
-                          item.isCompleted ? colors.textMuted : colors.primary
+                          item.is_completed ? colors.textMuted : colors.primary
                         }
                       />
                       <Text
                         style={[
                           homeStyles.metaText,
-                          !item.isCompleted && { color: colors.text },
+                          !item.is_completed && { color: colors.text },
                         ]}
                       >
-                        {new Date(item.dueDate).toLocaleDateString()}
+                        {new Date(item.due_date).toLocaleDateString()}
                       </Text>
                     </View>
                   )}
-                  {item.dueTime && (
+                  {item.due_time && (
                     <View style={homeStyles.metaItem}>
                       <Ionicons
                         name="time-outline"
                         size={14}
                         color={
-                          item.isCompleted ? colors.textMuted : colors.primary
+                          item.is_completed ? colors.textMuted : colors.primary
                         }
                       />
                       <Text
                         style={[
                           homeStyles.metaText,
-                          !item.isCompleted && { color: colors.text },
+                          !item.is_completed && { color: colors.text },
                         ]}
                       >
-                        {item.dueTime}
+                        {item.due_time}
                       </Text>
                     </View>
                   )}
@@ -537,7 +602,7 @@ export default function Index() {
           </TouchableOpacity>
 
           {/* Priority Badge - Top Right */}
-          {!item.isCompleted && item.priority && (
+          {!item.is_completed && item.priority && (
             <View style={homeStyles.todoRightSection}>
               <View
                 style={[
@@ -568,7 +633,7 @@ export default function Index() {
               </LinearGradient>
             </TouchableOpacity>
             <TouchableOpacity
-              onPress={() => handleDeleteTodo(item._id)}
+              onPress={() => handleDeleteTodo(item.id)}
               activeOpacity={0.8}
             >
               <LinearGradient
@@ -634,7 +699,7 @@ export default function Index() {
           <FlatList
             data={todos}
             renderItem={renderTodoItem}
-            keyExtractor={(item) => item._id}
+            keyExtractor={(item) => item.id}
             style={homeStyles.todoList}
             contentContainerStyle={homeStyles.todoListContent}
             ListEmptyComponent={<EmptyState category={selectedCategory} />}
@@ -684,14 +749,9 @@ export default function Index() {
                 message: "Todo created successfully",
                 type: "success",
               });
-              // Update cache if autoSync is OFF
-              if (!isAutoSync) {
-                // Small delay to allow Convex to update rawTodos
-                setTimeout(() => {
-                  if (rawTodos) {
-                    setCachedTodos(rawTodos);
-                  }
-                }, 300);
+              // Immediate cache update - no delay
+              if (!isAutoSync && rawTodos) {
+                setCachedTodos(rawTodos);
               }
             }}
           />
@@ -703,14 +763,23 @@ export default function Index() {
           onClose={handleCloseEditModal}
           todo={editingTodo}
           onSuccess={() => {
-            // Update cache if autoSync is OFF
-            if (!isAutoSync) {
-              setTimeout(() => {
-                if (rawTodos) {
-                  setCachedTodos(rawTodos);
-                }
-              }, 300);
+            // Show success toast
+            if (hapticsEnabled)
+              Haptics.notificationAsync(
+                Haptics.NotificationFeedbackType.Success,
+              );
+            setToastConfig({
+              visible: true,
+              message: "Todo updated successfully",
+              type: "success",
+            });
+            // Immediate cache update - no delay
+            if (!isAutoSync && rawTodos) {
+              setCachedTodos(rawTodos);
             }
+            // Reset optimistic state to force refetch
+            setOptimisticTodos(undefined);
+            setRawTodos(undefined);
           }}
         />
 
@@ -719,8 +788,8 @@ export default function Index() {
           visible={showDetailModal}
           onClose={() => setShowDetailModal(false)}
           todo={detailTodo}
-          isExpiringSoon={detailTodo ? expiringTodoIds.has(detailTodo._id) : false}
-          hoursUntilDeletion={detailTodo ? expiringTodos?.find(t => t._id === detailTodo._id)?.hoursUntilDeletion : undefined}
+          isExpiringSoon={detailTodo ? isExpiring(detailTodo) : false}
+          hoursUntilDeletion={undefined}
         />
 
         {/* Custom Alert */}
