@@ -478,20 +478,22 @@ export default function SignInScreen() {
 
       if (error) throw error;
 
+      // Sign out FIRST to clear session before resetting the flag
+      // This prevents the redirect logic from triggering during the brief moment
+      // when the user session still exists
+      await supabase.auth.signOut();
+      
       showToast("Password reset successful! You can now sign in.", "success");
       
-      // Reset all states
+      // Reset all states AFTER sign out
       setShowResetPassword(false);
-      setIsResettingPassword(false); // Clear flag
+      setIsResettingPassword(false); // Clear flag after signOut completes
       setVerificationEmail("");
       setNewPassword("");
       setConfirmPassword("");
       setEmail("");
       setPassword("");
       setIsSignUp(false);
-      
-      // Sign out to allow fresh login
-      await supabase.auth.signOut();
     } catch (err: any) {
       console.error("Reset password error", err);
       showToast(err.message || "Failed to reset password", "error");
