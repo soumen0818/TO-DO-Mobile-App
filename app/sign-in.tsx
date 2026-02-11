@@ -46,11 +46,17 @@ export default function SignInScreen() {
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   
-  // Rate limiting states
-  const [authAttempts, setAuthAttempts] = useState(0);
-  const [lastAttemptTime, setLastAttemptTime] = useState(0);
-  const [isRateLimited, setIsRateLimited] = useState(false);
-  const [rateLimitCooldown, setRateLimitCooldown] = useState(0);
+  // Sign Up rate limiting states (separate from sign in)
+  const [signUpAttempts, setSignUpAttempts] = useState(0);
+  const [signUpLastAttemptTime, setSignUpLastAttemptTime] = useState(0);
+  const [isSignUpRateLimited, setIsSignUpRateLimited] = useState(false);
+  const [signUpRateLimitCooldown, setSignUpRateLimitCooldown] = useState(0);
+  
+  // Forgot Password rate limiting states (separate from sign in)
+  const [forgotPasswordAttempts, setForgotPasswordAttempts] = useState(0);
+  const [forgotPasswordLastAttemptTime, setForgotPasswordLastAttemptTime] = useState(0);
+  const [isForgotPasswordRateLimited, setIsForgotPasswordRateLimited] = useState(false);
+  const [forgotPasswordRateLimitCooldown, setForgotPasswordRateLimitCooldown] = useState(0);
   
   // OTP verification states
   const [showOTPVerification, setShowOTPVerification] = useState(false);
@@ -163,59 +169,90 @@ export default function SignInScreen() {
     }
   }, [resendCooldown]);
 
-  // Rate limit cooldown timer
+  // Sign Up rate limit cooldown timer
   useEffect(() => {
-    if (rateLimitCooldown > 0) {
+    if (signUpRateLimitCooldown > 0) {
       const timer = setTimeout(() => {
-        setRateLimitCooldown(rateLimitCooldown - 1);
-        if (rateLimitCooldown === 1) {
-          setIsRateLimited(false);
-          setAuthAttempts(0);
+        setSignUpRateLimitCooldown(signUpRateLimitCooldown - 1);
+        if (signUpRateLimitCooldown === 1) {
+          setIsSignUpRateLimited(false);
+          setSignUpAttempts(0);
         }
       }, 1000);
       return () => clearTimeout(timer);
     }
-  }, [rateLimitCooldown]);
+  }, [signUpRateLimitCooldown]);
 
-  // Check and enforce rate limiting
-  const checkRateLimit = useCallback((): boolean => {
+  // Forgot Password rate limit cooldown timer
+  useEffect(() => {
+    if (forgotPasswordRateLimitCooldown > 0) {
+      const timer = setTimeout(() => {
+        setForgotPasswordRateLimitCooldown(forgotPasswordRateLimitCooldown - 1);
+        if (forgotPasswordRateLimitCooldown === 1) {
+          setIsForgotPasswordRateLimited(false);
+          setForgotPasswordAttempts(0);
+        }
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [forgotPasswordRateLimitCooldown]);
+
+  // Check and enforce rate limiting for Sign Up
+  const checkSignUpRateLimit = useCallback((): boolean => {
     const now = Date.now();
-    const timeSinceLastAttempt = now - lastAttemptTime;
+    const timeSinceLastAttempt = now - signUpLastAttemptTime;
     
     // Reset attempts if more than 15 minutes passed
     if (timeSinceLastAttempt > 15 * 60 * 1000) {
-      setAuthAttempts(0);
-      setIsRateLimited(false);
+      setSignUpAttempts(0);
+      setIsSignUpRateLimited(false);
       return true;
     }
     
-    // Check if rate limited (max 5 attempts per 15 minutes)
-    if (authAttempts >= 5) {
-      if (!isRateLimited) {
-        setIsRateLimited(true);
-        setRateLimitCooldown(300); // 5 minutes cooldown
-        showToast("Too many attempts. Please wait 5 minutes before trying again.", "error");
+    // Check if rate limited (max 5 sign up attempts per 15 minutes)
+    if (signUpAttempts >= 5) {
+      if (!isSignUpRateLimited) {
+        setIsSignUpRateLimited(true);
+        setSignUpRateLimitCooldown(300); // 5 minutes cooldown
       }
       return false;
     }
     
     // Increment attempts
-    setAuthAttempts(prev => prev + 1);
-    setLastAttemptTime(now);
+    setSignUpAttempts(prev => prev + 1);
+    setSignUpLastAttemptTime(now);
     return true;
-  }, [lastAttemptTime, authAttempts, isRateLimited, showToast]);
+  }, [signUpLastAttemptTime, signUpAttempts, isSignUpRateLimited]);
 
-  const onGoogleSignIn = useCallback(async () => {
-    // Check rate limiting
-    if (isRateLimited) {
-      showToast(`Too many attempts. Please wait ${rateLimitCooldown}s before trying again.`, "warning");
-      return;
+  // Check and enforce rate limiting for Forgot Password
+  const checkForgotPasswordRateLimit = useCallback((): boolean => {
+    const now = Date.now();
+    const timeSinceLastAttempt = now - forgotPasswordLastAttemptTime;
+    
+    // Reset attempts if more than 15 minutes passed
+    if (timeSinceLastAttempt > 15 * 60 * 1000) {
+      setForgotPasswordAttempts(0);
+      setIsForgotPasswordRateLimited(false);
+      return true;
     }
     
-    if (!checkRateLimit()) {
-      return;
+    // Check if rate limited (max 3 forgot password attempts per 15 minutes)
+    if (forgotPasswordAttempts >= 3) {
+      if (!isForgotPasswordRateLimited) {
+        setIsForgotPasswordRateLimited(true);
+        setForgotPasswordRateLimitCooldown(300); // 5 minutes cooldown
+      }
+      return false;
     }
+    
+    // Increment attempts
+    setForgotPasswordAttempts(prev => prev + 1);
+    setForgotPasswordLastAttemptTime(now);
+    return true;
+  }, [forgotPasswordLastAttemptTime, forgotPasswordAttempts, isForgotPasswordRateLimited]);
 
+  const onGoogleSignIn = useCallback(async () => {
+    // No frontend rate limiting for Google Sign In - rely on OAuth provider and Supabase
     try {
       console.log('[Google OAuth] Starting sign in...');
       
@@ -256,19 +293,9 @@ export default function SignInScreen() {
         showToast("Failed to sign in with Google. Please try again.", "error");
       }
     }
-  }, [isRateLimited, rateLimitCooldown, checkRateLimit, showToast]);
+  }, [showToast]);
 
   const onEmailAuth = async () => {
-    // Check rate limiting
-    if (isRateLimited) {
-      showToast(`Too many attempts. Please wait ${rateLimitCooldown}s before trying again.`, "warning");
-      return;
-    }
-    
-    if (!checkRateLimit()) {
-      return;
-    }
-
     if (!email || !password) {
       showToast("Please enter email and password", "error");
       return;
@@ -287,6 +314,17 @@ export default function SignInScreen() {
     setLoading(true);
     try {
       if (isSignUp) {
+        // Check rate limiting for sign up only
+        if (isSignUpRateLimited) {
+          setLoading(false);
+          return;
+        }
+        
+        if (!checkSignUpRateLimit()) {
+          setLoading(false);
+          return;
+        }
+
         // Sign up with OTP verification
         const { data, error } = await supabase.auth.signUp({
           email,
@@ -323,7 +361,7 @@ export default function SignInScreen() {
           }
         }
       } else {
-        // Sign in
+        // Sign in - no frontend rate limiting, rely on Supabase server-side rate limiting
         const { data, error } = await supabase.auth.signInWithPassword({
           email,
           password,
@@ -365,6 +403,15 @@ export default function SignInScreen() {
   const onForgotPassword = async () => {
     if (!email) {
       showToast("Please enter your email address", "warning");
+      return;
+    }
+
+    // Check rate limiting for forgot password
+    if (isForgotPasswordRateLimited) {
+      return;
+    }
+    
+    if (!checkForgotPasswordRateLimit()) {
       return;
     }
 
